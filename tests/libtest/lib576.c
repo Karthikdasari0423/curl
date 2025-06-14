@@ -31,7 +31,8 @@ struct chunk_data {
   int print_content;
 };
 
-static long chunk_bgn(const void *f, void *ptr, int remains)
+static
+long chunk_bgn(const void *f, void *ptr, int remains)
 {
   const struct curl_fileinfo *finfo = f;
   struct chunk_data *ch_d = ptr;
@@ -82,7 +83,8 @@ static long chunk_bgn(const void *f, void *ptr, int remains)
   return CURL_CHUNK_BGN_FUNC_OK;
 }
 
-static long chunk_end(void *ptr)
+static
+long chunk_end(void *ptr)
 {
   struct chunk_data *ch_d = ptr;
   if(ch_d->print_content) {

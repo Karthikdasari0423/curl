@@ -35,7 +35,8 @@ static void unit_stop(void)
 
 }
 
-#if defined(USE_GNUTLS) || defined(USE_SCHANNEL) || defined(USE_MBEDTLS)
+#if defined(USE_GNUTLS) || defined(USE_SCHANNEL) || defined(USE_SECTRANSP) || \
+  defined(USE_MBEDTLS)
 
 struct test1657_spec {
   CURLcode (*setbuf)(struct test1657_spec *spec, struct dynbuf *buf);

@@ -73,7 +73,6 @@ char *libtest_arg3 = NULL;
 char *libtest_arg4 = NULL;
 int test_argc;
 char **test_argv;
-int testnum;
 
 struct timeval tv_test_start; /* for test timing */
 
@@ -122,7 +121,6 @@ int main(int argc, char **argv)
   CURLcode result;
   int basearg;
   test_func_t test_func;
-  char *env;
 
   CURL_SET_BINMODE(stdout);
 
@@ -192,12 +190,6 @@ int main(int argc, char **argv)
     libtest_arg4 = argv[basearg + 3];
 
   URL = argv[basearg]; /* provide this to the rest */
-
-  env = getenv("CURL_TESTNUM");
-  if(env)
-    testnum = atoi(env);
-  else
-    testnum = 0;
 
   curl_mfprintf(stderr, "URL: %s\n", URL);
 

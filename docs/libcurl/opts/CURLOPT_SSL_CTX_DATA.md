@@ -13,6 +13,7 @@ TLS-backend:
   - OpenSSL
   - wolfSSL
   - mbedTLS
+  - BearSSL
 Added-in: 7.10.6
 ---
 
@@ -117,7 +118,8 @@ int main(void)
 
 # HISTORY
 
-Added in 7.11.0 for OpenSSL, in 7.42.0 for wolfSSL, in 7.54.0 for mbedTLS.
+Added in 7.11.0 for OpenSSL, in 7.42.0 for wolfSSL, in 7.54.0 for mbedTLS,
+in 7.83.0 in BearSSL.
 
 # %AVAILABILITY%
 

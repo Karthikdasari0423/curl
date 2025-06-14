@@ -28,9 +28,11 @@
 #include "warnless.h"
 #include "memdebug.h"
 
-static int t1553_xferinfo(void *p,
-                          curl_off_t dltotal, curl_off_t dlnow,
-                          curl_off_t ultotal, curl_off_t ulnow)
+#define TEST_HANG_TIMEOUT 60 * 1000
+
+static int xferinfo(void *p,
+                    curl_off_t dltotal, curl_off_t dlnow,
+                    curl_off_t ultotal, curl_off_t ulnow)
 {
   (void)p;
   (void)dlnow;
@@ -70,7 +72,7 @@ CURLcode test(char *URL)
   easy_setopt(curls, CURLOPT_VERBOSE, 1L);
   easy_setopt(curls, CURLOPT_MIMEPOST, mime);
   easy_setopt(curls, CURLOPT_USERPWD, "u:s");
-  easy_setopt(curls, CURLOPT_XFERINFOFUNCTION, t1553_xferinfo);
+  easy_setopt(curls, CURLOPT_XFERINFOFUNCTION, xferinfo);
   easy_setopt(curls, CURLOPT_NOPROGRESS, 1L);
 
   libtest_debug_config.nohex = 1;

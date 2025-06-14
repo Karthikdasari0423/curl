@@ -27,22 +27,22 @@
 #define THREADS 2
 
 /* struct containing data of a thread */
-struct t586_Tdata {
+struct Tdata {
   CURLSH *share;
   char *url;
 };
 
-struct t586_userdata {
+struct userdata {
   const char *text;
   int counter;
 };
 
 /* lock callback */
-static void t586_test_lock(CURL *handle, curl_lock_data data,
-                           curl_lock_access laccess, void *useptr)
+static void test_lock(CURL *handle, curl_lock_data data,
+                      curl_lock_access laccess, void *useptr)
 {
   const char *what;
-  struct t586_userdata *user = (struct t586_userdata *)useptr;
+  struct userdata *user = (struct userdata *)useptr;
 
   (void)handle;
   (void)laccess;
@@ -69,10 +69,10 @@ static void t586_test_lock(CURL *handle, curl_lock_data data,
 }
 
 /* unlock callback */
-static void t586_test_unlock(CURL *handle, curl_lock_data data, void *useptr)
+static void test_unlock(CURL *handle, curl_lock_data data, void *useptr)
 {
   const char *what;
-  struct t586_userdata *user = (struct t586_userdata *)useptr;
+  struct userdata *user = (struct userdata *)useptr;
   (void)handle;
   switch(data) {
     case CURL_LOCK_DATA_SHARE:
@@ -96,10 +96,10 @@ static void t586_test_unlock(CURL *handle, curl_lock_data data, void *useptr)
 }
 
 /* the dummy thread function */
-static void *t586_test_fire(void *ptr)
+static void *test_fire(void *ptr)
 {
   CURLcode code;
-  struct t586_Tdata *tdata = (struct t586_Tdata*)ptr;
+  struct Tdata *tdata = (struct Tdata*)ptr;
   CURL *curl;
 
   curl = curl_easy_init();
@@ -134,11 +134,11 @@ CURLcode test(char *URL)
   CURLcode res = CURLE_OK;
   CURLSHcode scode = CURLSHE_OK;
   char *url;
-  struct t586_Tdata tdata;
+  struct Tdata tdata;
   CURL *curl;
   CURLSH *share;
   int i;
-  struct t586_userdata user;
+  struct userdata user;
 
   user.text = "Pigs in space";
   user.counter = 0;
@@ -160,11 +160,11 @@ CURLcode test(char *URL)
 
   if(CURLSHE_OK == scode) {
     curl_mprintf("CURLSHOPT_LOCKFUNC\n");
-    scode = curl_share_setopt(share, CURLSHOPT_LOCKFUNC, t586_test_lock);
+    scode = curl_share_setopt(share, CURLSHOPT_LOCKFUNC, test_lock);
   }
   if(CURLSHE_OK == scode) {
     curl_mprintf("CURLSHOPT_UNLOCKFUNC\n");
-    scode = curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, t586_test_unlock);
+    scode = curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, test_unlock);
   }
   if(CURLSHE_OK == scode) {
     curl_mprintf("CURLSHOPT_USERDATA\n");
@@ -193,7 +193,7 @@ CURLcode test(char *URL)
 
     /* simulate thread, direct call of "thread" function */
     curl_mprintf("*** run %d\n",i);
-    t586_test_fire(&tdata);
+    test_fire(&tdata);
   }
 
 

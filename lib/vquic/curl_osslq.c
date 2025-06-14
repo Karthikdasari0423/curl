@@ -2009,39 +2009,44 @@ out:
   return nwritten;
 }
 
-static CURLcode cf_osslq_send(struct Curl_cfilter *cf, struct Curl_easy *data,
-                              const void *buf, size_t len, bool eos,
-                              size_t *pnwritten)
+static ssize_t cf_osslq_send(struct Curl_cfilter *cf, struct Curl_easy *data,
+                             const void *buf, size_t len, bool eos,
+                             CURLcode *err)
 {
   struct cf_osslq_ctx *ctx = cf->ctx;
   struct h3_stream_ctx *stream = H3_STREAM_CTX(ctx, data);
   struct cf_call_data save;
   ssize_t nwritten;
-  CURLcode result = CURLE_OK, r2;
+  CURLcode result;
 
   (void)eos; /* use to end stream */
   CF_DATA_SAVE(save, cf, data);
   DEBUGASSERT(cf->connected);
   DEBUGASSERT(ctx->tls.ossl.ssl);
   DEBUGASSERT(ctx->h3.conn);
-  *pnwritten = 0;
+  *err = CURLE_OK;
 
   result = cf_progress_ingress(cf, data);
-  if(result)
+  if(result) {
+    *err = result;
+    nwritten = -1;
     goto out;
+  }
 
   result = cf_progress_egress(cf, data);
-  if(result)
+  if(result) {
+    *err = result;
+    nwritten = -1;
     goto out;
+  }
 
   if(!stream || stream->s.id < 0) {
-    nwritten = h3_stream_open(cf, data, buf, len, &result);
+    nwritten = h3_stream_open(cf, data, buf, len, err);
     if(nwritten < 0) {
-      CURL_TRC_CF(data, cf, "failed to open stream -> %d", result);
+      CURL_TRC_CF(data, cf, "failed to open stream -> %d", *err);
       goto out;
     }
     stream = H3_STREAM_CTX(ctx, data);
-    *pnwritten = (size_t)nwritten;
   }
   else if(stream->closed) {
     if(stream->resp_hds_complete) {
@@ -2052,53 +2057,56 @@ static CURLcode cf_osslq_send(struct Curl_cfilter *cf, struct Curl_easy *data,
        * error situation. */
       CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] discarding data"
                   "on closed stream with response", stream->s.id);
-      result = CURLE_OK;
-      *pnwritten = len;
+      *err = CURLE_OK;
+      nwritten = (ssize_t)len;
       goto out;
     }
     CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] send_body(len=%zu) "
                 "-> stream closed", stream->s.id, len);
-    result = CURLE_HTTP3;
+    *err = CURLE_HTTP3;
+    nwritten = -1;
     goto out;
   }
   else {
-    nwritten = Curl_bufq_write(&stream->sendbuf, buf, len, &result);
+    nwritten = Curl_bufq_write(&stream->sendbuf, buf, len, err);
     CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] cf_send, add to "
                 "sendbuf(len=%zu) -> %zd, %d",
-                stream->s.id, len, nwritten, result);
+                stream->s.id, len, nwritten, *err);
     if(nwritten < 0) {
       goto out;
     }
-    *pnwritten = (size_t)nwritten;
+
     (void)nghttp3_conn_resume_stream(ctx->h3.conn, stream->s.id);
   }
 
-  r2 = cf_progress_egress(cf, data);
-  if(r2)
-    result = r2;
+  result = cf_progress_egress(cf, data);
+  if(result) {
+    *err = result;
+    nwritten = -1;
+  }
 
 out:
-  r2 = check_and_set_expiry(cf, data);
-  if(r2)
-    result = r2;
-  CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] cf_send(len=%zu) -> %d, %zu",
-              stream ? stream->s.id : -1, len, result, *pnwritten);
+  result = check_and_set_expiry(cf, data);
+  CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] cf_send(len=%zu) -> %zd, %d",
+              stream ? stream->s.id : -1, len, nwritten, *err);
   CF_DATA_RESTORE(cf, save);
-  return result;
+  return nwritten;
 }
 
-static CURLcode recv_closed_stream(struct Curl_cfilter *cf,
-                                   struct Curl_easy *data,
-                                   struct h3_stream_ctx *stream,
-                                   size_t *pnread)
+static ssize_t recv_closed_stream(struct Curl_cfilter *cf,
+                                  struct Curl_easy *data,
+                                  struct h3_stream_ctx *stream,
+                                  CURLcode *err)
 {
+  ssize_t nread = -1;
+
   (void)cf;
-  *pnread = 0;
   if(stream->reset) {
     failf(data,
           "HTTP/3 stream %" FMT_PRId64 " reset by server",
           stream->s.id);
-    return data->req.bytecount ? CURLE_PARTIAL_FILE : CURLE_HTTP3;
+    *err = data->req.bytecount ? CURLE_PARTIAL_FILE : CURLE_HTTP3;
+    goto out;
   }
   else if(!stream->resp_hds_complete) {
     failf(data,
@@ -2106,19 +2114,24 @@ static CURLcode recv_closed_stream(struct Curl_cfilter *cf,
           " was closed cleanly, but before getting"
           " all response header fields, treated as error",
           stream->s.id);
-    return CURLE_HTTP3;
+    *err = CURLE_HTTP3;
+    goto out;
   }
-  return CURLE_OK;
+  *err = CURLE_OK;
+  nread = 0;
+
+out:
+  return nread;
 }
 
-static CURLcode cf_osslq_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
-                              char *buf, size_t len, size_t *pnread)
+static ssize_t cf_osslq_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
+                             char *buf, size_t len, CURLcode *err)
 {
   struct cf_osslq_ctx *ctx = cf->ctx;
   struct h3_stream_ctx *stream = H3_STREAM_CTX(ctx, data);
   ssize_t nread = -1;
   struct cf_call_data save;
-  CURLcode result = CURLE_OK, r2;
+  CURLcode result;
 
   (void)ctx;
   CF_DATA_SAVE(save, cf, data);
@@ -2126,66 +2139,69 @@ static CURLcode cf_osslq_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
   DEBUGASSERT(ctx);
   DEBUGASSERT(ctx->tls.ossl.ssl);
   DEBUGASSERT(ctx->h3.conn);
-  *pnread = 0;
+  *err = CURLE_OK;
 
   if(!stream) {
-    result = CURLE_RECV_ERROR;
+    *err = CURLE_RECV_ERROR;
     goto out;
   }
 
   if(!Curl_bufq_is_empty(&stream->recvbuf)) {
     nread = Curl_bufq_read(&stream->recvbuf,
-                           (unsigned char *)buf, len, &result);
+                           (unsigned char *)buf, len, err);
     if(nread < 0) {
       CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] read recvbuf(len=%zu) "
-                  "-> %zd, %d", stream->s.id, len, nread, result);
+                  "-> %zd, %d", stream->s.id, len, nread, *err);
       goto out;
     }
-    *pnread = (size_t)nread;
   }
 
-  r2 = cf_progress_ingress(cf, data);
-  if(r2) {
-    result = r2;
+  result = cf_progress_ingress(cf, data);
+  if(result) {
+    *err = result;
+    nread = -1;
     goto out;
   }
 
   /* recvbuf had nothing before, maybe after progressing ingress? */
-  if(!*pnread && !Curl_bufq_is_empty(&stream->recvbuf)) {
+  if(nread < 0 && !Curl_bufq_is_empty(&stream->recvbuf)) {
     nread = Curl_bufq_read(&stream->recvbuf,
-                           (unsigned char *)buf, len, &result);
+                           (unsigned char *)buf, len, err);
     if(nread < 0) {
       CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] read recvbuf(len=%zu) "
-                  "-> %zd, %d", stream->s.id, len, nread, result);
+                  "-> %zd, %d", stream->s.id, len, nread, *err);
       goto out;
     }
-    *pnread = (size_t)nread;
   }
 
-  if(*pnread) {
+  if(nread > 0) {
     h3_drain_stream(cf, data);
   }
   else {
     if(stream->closed) {
-      result = recv_closed_stream(cf, data, stream, pnread);
+      nread = recv_closed_stream(cf, data, stream, err);
       goto out;
     }
-    result = CURLE_AGAIN;
+    *err = CURLE_AGAIN;
+    nread = -1;
   }
 
 out:
   if(cf_progress_egress(cf, data)) {
-    result = CURLE_SEND_ERROR;
+    *err = CURLE_SEND_ERROR;
+    nread = -1;
   }
   else {
-    r2 = check_and_set_expiry(cf, data);
-    if(r2)
-      result = r2;
+    CURLcode result2 = check_and_set_expiry(cf, data);
+    if(result2) {
+      *err = result2;
+      nread = -1;
+    }
   }
-  CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] cf_recv(len=%zu) -> %d, %zu",
-              stream ? stream->s.id : -1, len, result, *pnread);
+  CURL_TRC_CF(data, cf, "[%" FMT_PRId64 "] cf_recv(len=%zu) -> %zd, %d",
+              stream ? stream->s.id : -1, len, nread, *err);
   CF_DATA_RESTORE(cf, save);
-  return result;
+  return nread;
 }
 
 /*

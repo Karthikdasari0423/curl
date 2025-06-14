@@ -574,6 +574,13 @@ sub checksystemfeatures {
                 $feature{"wolfssl"} = 1;
                 $feature{"SSLpinning"} = 1;
             }
+            elsif ($libcurl =~ /\sbearssl\b/i) {
+                $feature{"bearssl"} = 1;
+            }
+            elsif ($libcurl =~ /\ssecuretransport\b/i) {
+                $feature{"sectransp"} = 1;
+                $feature{"SSLpinning"} = 1;
+            }
             elsif ($libcurl =~ /\s(BoringSSL|AWS-LC)\b/i) {
                 # OpenSSL compatible API
                 $feature{"OpenSSL"} = 1;
@@ -827,16 +834,9 @@ sub checksystemfeatures {
     chomp $has_shared;
     $has_shared = $has_shared eq "yes";
 
-
-    if($torture) {
-        if(!$feature{"TrackMemory"}) {
-            die "can't run torture tests since curl was built without ".
-                "TrackMemory feature (--enable-curldebug)";
-        }
-        if ($feature{"threaded-resolver"} && !$valgrind) {
-            die "can't run torture tests since curl was built with the ".
-                "threaded resolver, and we aren't running with valgrind";
-        }
+    if(!$feature{"TrackMemory"} && $torture) {
+        die "can't run torture tests since curl was built without ".
+            "TrackMemory feature (--enable-curldebug)";
     }
 
     my $hostname=join(' ', runclientoutput("hostname"));
@@ -871,12 +871,10 @@ sub checksystemfeatures {
         # Only show if not the default for now
         logmsg "* Jobs: $jobs\n";
     }
-    # Disable memory tracking when using threaded resolver
     if($feature{"TrackMemory"} && $feature{"threaded-resolver"}) {
         logmsg("*\n",
                "*** DISABLES TrackMemory (memory tracking) when using threaded resolver\n",
                "*\n");
-        $feature{"TrackMemory"} = 0;
     }
 
     logmsg sprintf("* Env: %s%s%s%s%s", $valgrind?"Valgrind ":"",
@@ -886,6 +884,10 @@ sub checksystemfeatures {
                    $nghttpx_h3);
     logmsg sprintf("%s\n", $libtool?"Libtool ":"");
     logmsg ("* Seed: $randseed\n");
+
+    # Disable memory tracking when using threaded resolver
+    $feature{"TrackMemory"} = $feature{"TrackMemory"} && !$feature{"threaded-resolver"};
+
 }
 
 #######################################################################

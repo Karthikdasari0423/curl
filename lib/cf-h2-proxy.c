@@ -238,17 +238,18 @@ static ssize_t proxy_nw_in_reader(void *reader_ctx,
                                   CURLcode *err)
 {
   struct Curl_cfilter *cf = reader_ctx;
+  ssize_t nread;
 
   if(cf) {
     struct Curl_easy *data = CF_DATA_CURRENT(cf);
-    size_t nread;
-    *err = Curl_conn_cf_recv(cf->next, data, (char *)buf, buflen, &nread);
-    CURL_TRC_CF(data, cf, "[0] nw_in_reader(len=%zu) -> %d, %zu",
-                buflen, *err, nread);
-    return *err ? -1 : (ssize_t)nread;
+    nread = Curl_conn_cf_recv(cf->next, data, (char *)buf, buflen, err);
+    CURL_TRC_CF(data, cf, "[0] nw_in_reader(len=%zu) -> %zd, %d",
+                buflen, nread, *err);
   }
-  *err = CURLE_FAILED_INIT;
-  return -1;
+  else {
+    nread = 0;
+  }
+  return nread;
 }
 
 static ssize_t proxy_h2_nw_out_writer(void *writer_ctx,
@@ -256,18 +257,19 @@ static ssize_t proxy_h2_nw_out_writer(void *writer_ctx,
                                       CURLcode *err)
 {
   struct Curl_cfilter *cf = writer_ctx;
+  ssize_t nwritten;
 
   if(cf) {
     struct Curl_easy *data = CF_DATA_CURRENT(cf);
-    size_t nwritten;
-    *err = Curl_conn_cf_send(cf->next, data, (const char *)buf, buflen,
-                             FALSE, &nwritten);
+    nwritten = Curl_conn_cf_send(cf->next, data, (const char *)buf, buflen,
+                                 FALSE, err);
     CURL_TRC_CF(data, cf, "[0] nw_out_writer(len=%zu) -> %zd, %d",
                 buflen, nwritten, *err);
-    return *err ? -1 : (ssize_t)nwritten;
   }
-  *err = CURLE_FAILED_INIT;
-  return -1;
+  else {
+    nwritten = 0;
+  }
+  return nwritten;
 }
 
 static int proxy_h2_client_new(struct Curl_cfilter *cf,
@@ -1275,203 +1277,212 @@ static void cf_h2_proxy_adjust_pollset(struct Curl_cfilter *cf,
   }
 }
 
-static CURLcode h2_handle_tunnel_close(struct Curl_cfilter *cf,
-                                       struct Curl_easy *data,
-                                       size_t *pnread)
+static ssize_t h2_handle_tunnel_close(struct Curl_cfilter *cf,
+                                      struct Curl_easy *data,
+                                      CURLcode *err)
 {
   struct cf_h2_proxy_ctx *ctx = cf->ctx;
+  ssize_t rv = 0;
 
-  *pnread = 0;
   if(ctx->tunnel.error == NGHTTP2_REFUSED_STREAM) {
     CURL_TRC_CF(data, cf, "[%d] REFUSED_STREAM, try again on a new "
                 "connection", ctx->tunnel.stream_id);
     connclose(cf->conn, "REFUSED_STREAM"); /* do not use this anymore */
-    return CURLE_RECV_ERROR; /* trigger Curl_retry_request() later */
+    *err = CURLE_RECV_ERROR; /* trigger Curl_retry_request() later */
+    return -1;
   }
   else if(ctx->tunnel.error != NGHTTP2_NO_ERROR) {
     failf(data, "HTTP/2 stream %u was not closed cleanly: %s (err %u)",
           ctx->tunnel.stream_id, nghttp2_http2_strerror(ctx->tunnel.error),
           ctx->tunnel.error);
-    return CURLE_HTTP2_STREAM;
+    *err = CURLE_HTTP2_STREAM;
+    return -1;
   }
   else if(ctx->tunnel.reset) {
     failf(data, "HTTP/2 stream %u was reset", ctx->tunnel.stream_id);
-    return CURLE_RECV_ERROR;
+    *err = CURLE_RECV_ERROR;
+    return -1;
   }
 
-  CURL_TRC_CF(data, cf, "[%d] handle_tunnel_close -> 0",
-              ctx->tunnel.stream_id);
-  return CURLE_OK;
+  *err = CURLE_OK;
+  rv = 0;
+  CURL_TRC_CF(data, cf, "[%d] handle_tunnel_close -> %zd, %d",
+              ctx->tunnel.stream_id, rv, *err);
+  return rv;
 }
 
-static CURLcode tunnel_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
-                            char *buf, size_t len, size_t *pnread)
+static ssize_t tunnel_recv(struct Curl_cfilter *cf, struct Curl_easy *data,
+                           char *buf, size_t len, CURLcode *err)
 {
   struct cf_h2_proxy_ctx *ctx = cf->ctx;
-  CURLcode result = CURLE_AGAIN;
+  ssize_t nread = -1;
 
-  *pnread = 0;
+  *err = CURLE_AGAIN;
   if(!Curl_bufq_is_empty(&ctx->tunnel.recvbuf)) {
-    ssize_t nread = Curl_bufq_read(&ctx->tunnel.recvbuf,
-                                   (unsigned char *)buf, len, &result);
+    nread = Curl_bufq_read(&ctx->tunnel.recvbuf,
+                           (unsigned char *)buf, len, err);
     if(nread < 0)
       goto out;
     DEBUGASSERT(nread > 0);
-    *pnread = (size_t)nread;
   }
 
-  if(!*pnread) {
+  if(nread < 0) {
     if(ctx->tunnel.closed) {
-      result = h2_handle_tunnel_close(cf, data, pnread);
+      nread = h2_handle_tunnel_close(cf, data, err);
     }
     else if(ctx->tunnel.reset ||
             (ctx->conn_closed && Curl_bufq_is_empty(&ctx->inbufq)) ||
             (ctx->rcvd_goaway &&
              ctx->last_stream_id < ctx->tunnel.stream_id)) {
-      result = CURLE_RECV_ERROR;
+      *err = CURLE_RECV_ERROR;
+      nread = -1;
     }
-    else
-      result = CURLE_AGAIN;
+  }
+  else if(nread == 0) {
+    *err = CURLE_AGAIN;
+    nread = -1;
   }
 
 out:
-  CURL_TRC_CF(data, cf, "[%d] tunnel_recv(len=%zu) -> %d, %zu",
-              ctx->tunnel.stream_id, len, result, *pnread);
-  return result;
+  CURL_TRC_CF(data, cf, "[%d] tunnel_recv(len=%zu) -> %zd, %d",
+              ctx->tunnel.stream_id, len, nread, *err);
+  return nread;
 }
 
-static CURLcode cf_h2_proxy_recv(struct Curl_cfilter *cf,
-                                 struct Curl_easy *data,
-                                 char *buf, size_t len,
-                                 size_t *pnread)
+static ssize_t cf_h2_proxy_recv(struct Curl_cfilter *cf,
+                                struct Curl_easy *data,
+                                char *buf, size_t len, CURLcode *err)
 {
   struct cf_h2_proxy_ctx *ctx = cf->ctx;
+  ssize_t nread = -1;
   struct cf_call_data save;
-  CURLcode result, r2;
-
-  *pnread = 0;
-  CF_DATA_SAVE(save, cf, data);
+  CURLcode result;
 
   if(ctx->tunnel.state != H2_TUNNEL_ESTABLISHED) {
-    result = CURLE_RECV_ERROR;
-    goto out;
+    *err = CURLE_RECV_ERROR;
+    return -1;
   }
+  CF_DATA_SAVE(save, cf, data);
 
   if(Curl_bufq_is_empty(&ctx->tunnel.recvbuf)) {
-    result = proxy_h2_progress_ingress(cf, data);
-    if(result)
+    *err = proxy_h2_progress_ingress(cf, data);
+    if(*err)
       goto out;
   }
 
-  result = tunnel_recv(cf, data, buf, len, pnread);
+  nread = tunnel_recv(cf, data, buf, len, err);
 
-  if(!result) {
-    CURL_TRC_CF(data, cf, "[%d] increase window by %zu",
-                ctx->tunnel.stream_id, *pnread);
-    nghttp2_session_consume(ctx->h2, ctx->tunnel.stream_id, *pnread);
+  if(nread > 0) {
+    CURL_TRC_CF(data, cf, "[%d] increase window by %zd",
+                ctx->tunnel.stream_id, nread);
+    nghttp2_session_consume(ctx->h2, ctx->tunnel.stream_id, (size_t)nread);
   }
 
-  r2 = proxy_h2_progress_egress(cf, data);
-  if(r2 && (r2 != CURLE_AGAIN))
-    result = r2;
+  result = proxy_h2_progress_egress(cf, data);
+  if(result && (result != CURLE_AGAIN)) {
+    *err = result;
+    nread = -1;
+  }
 
 out:
   if(!Curl_bufq_is_empty(&ctx->tunnel.recvbuf) &&
-     (!result || (result == CURLE_AGAIN))) {
+     (nread >= 0 || *err == CURLE_AGAIN)) {
     /* data pending and no fatal error to report. Need to trigger
      * draining to avoid stalling when no socket events happen. */
     drain_tunnel(cf, data, &ctx->tunnel);
   }
-  CURL_TRC_CF(data, cf, "[%d] cf_recv(len=%zu) -> %d, %zu",
-              ctx->tunnel.stream_id, len, result, *pnread);
+  CURL_TRC_CF(data, cf, "[%d] cf_recv(len=%zu) -> %zd %d",
+              ctx->tunnel.stream_id, len, nread, *err);
   CF_DATA_RESTORE(cf, save);
-  return result;
+  return nread;
 }
 
-static CURLcode cf_h2_proxy_send(struct Curl_cfilter *cf,
-                                 struct Curl_easy *data,
-                                 const void *buf, size_t len, bool eos,
-                                 size_t *pnwritten)
+static ssize_t cf_h2_proxy_send(struct Curl_cfilter *cf,
+                                struct Curl_easy *data,
+                                const void *buf, size_t len, bool eos,
+                                CURLcode *err)
 {
   struct cf_h2_proxy_ctx *ctx = cf->ctx;
   struct cf_call_data save;
   int rv;
-  ssize_t nwritten = 0;
-  CURLcode result, r2;
+  ssize_t nwritten;
+  CURLcode result;
 
   (void)eos;
-  *pnwritten = 0;
+  if(ctx->tunnel.state != H2_TUNNEL_ESTABLISHED) {
+    *err = CURLE_SEND_ERROR;
+    return -1;
+  }
   CF_DATA_SAVE(save, cf, data);
 
-  if(ctx->tunnel.state != H2_TUNNEL_ESTABLISHED) {
-    result = CURLE_SEND_ERROR;
-    goto out;
-  }
-
   if(ctx->tunnel.closed) {
-    result = CURLE_SEND_ERROR;
+    nwritten = -1;
+    *err = CURLE_SEND_ERROR;
     goto out;
   }
-
-  nwritten = Curl_bufq_write(&ctx->tunnel.sendbuf, buf, len, &result);
-  CURL_TRC_CF(data, cf, "cf_send(), bufq_write %d, %zd", result, nwritten);
-  if(nwritten >= 0)
-    *pnwritten = (size_t)nwritten;
-  else if(result && (result != CURLE_AGAIN))
-    goto out;
+  else {
+    nwritten = Curl_bufq_write(&ctx->tunnel.sendbuf, buf, len, err);
+    if(nwritten < 0 && (*err != CURLE_AGAIN))
+      goto out;
+  }
 
   if(!Curl_bufq_is_empty(&ctx->tunnel.sendbuf)) {
     /* req body data is buffered, resume the potentially suspended stream */
     rv = nghttp2_session_resume_data(ctx->h2, ctx->tunnel.stream_id);
     if(nghttp2_is_fatal(rv)) {
-      result = CURLE_SEND_ERROR;
+      *err = CURLE_SEND_ERROR;
+      nwritten = -1;
       goto out;
     }
   }
 
-  r2 = proxy_h2_progress_ingress(cf, data);
-  if(r2 && (r2 != CURLE_AGAIN)) {
-    result = r2;
+  result = proxy_h2_progress_ingress(cf, data);
+  if(result) {
+    *err = result;
+    nwritten = -1;
     goto out;
   }
 
   /* Call the nghttp2 send loop and flush to write ALL buffered data,
    * headers and/or request body completely out to the network */
-  r2 = proxy_h2_progress_egress(cf, data);
-  if(r2 && (r2 != CURLE_AGAIN)) {
-    result = r2;
+  result = proxy_h2_progress_egress(cf, data);
+  if(result && (result != CURLE_AGAIN)) {
+    *err = result;
+    nwritten = -1;
     goto out;
   }
 
-  if(!result && proxy_h2_should_close_session(ctx)) {
+  if(proxy_h2_should_close_session(ctx)) {
     /* nghttp2 thinks this session is done. If the stream has not been
      * closed, this is an error state for out transfer */
     if(ctx->tunnel.closed) {
-      result = CURLE_SEND_ERROR;
+      *err = CURLE_SEND_ERROR;
+      nwritten = -1;
     }
     else {
       CURL_TRC_CF(data, cf, "[0] send: nothing to do in this session");
-      result = CURLE_HTTP2;
+      *err = CURLE_HTTP2;
+      nwritten = -1;
     }
   }
 
 out:
   if(!Curl_bufq_is_empty(&ctx->tunnel.recvbuf) &&
-     (!result || (result == CURLE_AGAIN))) {
+     (nwritten >= 0 || *err == CURLE_AGAIN)) {
     /* data pending and no fatal error to report. Need to trigger
      * draining to avoid stalling when no socket events happen. */
     drain_tunnel(cf, data, &ctx->tunnel);
   }
-  CURL_TRC_CF(data, cf, "[%d] cf_send(len=%zu) -> %d, %zu, "
+  CURL_TRC_CF(data, cf, "[%d] cf_send(len=%zu) -> %zd, %d, "
               "h2 windows %d-%d (stream-conn), buffers %zu-%zu (stream-conn)",
-              ctx->tunnel.stream_id, len, result, *pnwritten,
+              ctx->tunnel.stream_id, len, nwritten, *err,
               nghttp2_session_get_stream_remote_window_size(
                   ctx->h2, ctx->tunnel.stream_id),
               nghttp2_session_get_remote_window_size(ctx->h2),
               Curl_bufq_len(&ctx->tunnel.sendbuf),
               Curl_bufq_len(&ctx->outbufq));
   CF_DATA_RESTORE(cf, save);
-  return result;
+  return nwritten;
 }
 
 static CURLcode cf_h2_proxy_flush(struct Curl_cfilter *cf,

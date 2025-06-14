@@ -25,6 +25,8 @@
 
 #include "memdebug.h"
 
+#define TEST_HANG_TIMEOUT (60 * 1000)
+
 static int new_fnmatch(void *ptr,
                        const char *pattern, const char *string)
 {

@@ -33,6 +33,8 @@
 #include "warnless.h"
 #include "memdebug.h"
 
+#define TEST_HANG_TIMEOUT 60 * 1000
+
 CURLcode test(char *URL)
 {
   CURL *easy = NULL;

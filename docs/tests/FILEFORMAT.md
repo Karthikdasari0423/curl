@@ -441,6 +441,7 @@ Features testable here are:
 - `aws` - built with **aws-sigv4** support
 - `AppleIDN`
 - `asyn-rr` - c-ares is used for additional records only
+- `bearssl`
 - `brotli`
 - `c-ares` - c-ares is used for (all) name resolves
 - `CharConv`
@@ -487,6 +488,7 @@ Features testable here are:
 - `PSL`
 - `rustls`
 - `Schannel`
+- `sectransp`
 - `shuffle-dns`
 - `socks`
 - `SPNEGO`

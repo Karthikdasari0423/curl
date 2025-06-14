@@ -20,7 +20,7 @@ multi
 ftp
 </server>
 <tool>
-lib525
+lib%TESTNUMBER
 </tool>
 <name>
 FTP PORT upload using multi interface (weird cleanup function sequence)

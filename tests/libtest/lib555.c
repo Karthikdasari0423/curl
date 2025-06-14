@@ -35,9 +35,15 @@
 #include "warnless.h"
 #include "memdebug.h"
 
-static const char uploadthis[] = "this is the blurb we want to upload\n";
+#define TEST_HANG_TIMEOUT 60 * 1000
 
-static size_t t555_read_cb(char *ptr, size_t size, size_t nmemb, void *clientp)
+static const char uploadthis[] =
+  "this is the blurb we want to upload\n";
+
+static size_t readcallback(char  *ptr,
+                           size_t size,
+                           size_t nmemb,
+                           void *clientp)
 {
   int *counter = (int *)clientp;
 
@@ -56,8 +62,9 @@ static size_t t555_read_cb(char *ptr, size_t size, size_t nmemb, void *clientp)
   curl_mfprintf(stderr, "READ NOT FINE!\n");
   return 0;
 }
-
-static curlioerr t555_ioctl_callback(CURL *handle, int cmd, void *clientp)
+static curlioerr ioctlcallback(CURL *handle,
+                               int cmd,
+                               void *clientp)
 {
   int *counter = (int *)clientp;
   (void)handle; /* unused */
@@ -67,6 +74,7 @@ static curlioerr t555_ioctl_callback(CURL *handle, int cmd, void *clientp)
   }
   return CURLIOE_OK;
 }
+
 
 CURLcode test(char *URL)
 {
@@ -87,10 +95,10 @@ CURLcode test(char *URL)
   easy_setopt(curl, CURLOPT_HEADER, 1L);
 
   /* read the POST data from a callback */
-  easy_setopt(curl, CURLOPT_IOCTLFUNCTION, t555_ioctl_callback);
+  easy_setopt(curl, CURLOPT_IOCTLFUNCTION, ioctlcallback);
   easy_setopt(curl, CURLOPT_IOCTLDATA, &counter);
 
-  easy_setopt(curl, CURLOPT_READFUNCTION, t555_read_cb);
+  easy_setopt(curl, CURLOPT_READFUNCTION, readcallback);
   easy_setopt(curl, CURLOPT_READDATA, &counter);
   /* We CANNOT do the POST fine without setting the size (or choose
      chunked)! */

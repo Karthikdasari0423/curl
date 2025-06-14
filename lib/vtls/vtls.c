@@ -61,7 +61,9 @@
 #include "gtls.h"           /* GnuTLS versions */
 #include "wolfssl.h"        /* wolfSSL versions */
 #include "schannel.h"       /* Schannel SSPI version */
+#include "sectransp.h"      /* Secure Transport (Darwin) version */
 #include "mbedtls.h"        /* mbedTLS versions */
+#include "bearssl.h"        /* BearSSL versions */
 #include "rustls.h"         /* Rustls versions */
 
 #include "../slist.h"
@@ -876,6 +878,16 @@ bool Curl_ssl_cert_status_request(void)
   return FALSE;
 }
 
+/*
+ * Check whether the SSL backend supports false start.
+ */
+bool Curl_ssl_false_start(void)
+{
+  if(Curl_ssl->false_start)
+    return Curl_ssl->false_start();
+  return FALSE;
+}
+
 static int multissl_init(void)
 {
   if(multissl_setup(NULL))
@@ -956,6 +968,7 @@ static const struct Curl_ssl Curl_ssl_multi = {
   NULL,                              /* set_engine */
   NULL,                              /* set_engine_default */
   NULL,                              /* engines_list */
+  NULL,                              /* false_start */
   NULL,                              /* sha256sum */
   multissl_recv_plain,               /* recv decrypted data */
   multissl_send_plain,               /* send data to encrypt */
@@ -975,8 +988,12 @@ const struct Curl_ssl *Curl_ssl =
   &Curl_ssl_rustls;
 #elif defined(USE_OPENSSL)
   &Curl_ssl_openssl;
+#elif defined(USE_SECTRANSP)
+  &Curl_ssl_sectransp;
 #elif defined(USE_SCHANNEL)
   &Curl_ssl_schannel;
+#elif defined(USE_BEARSSL)
+  &Curl_ssl_bearssl;
 #else
 #error "Missing struct Curl_ssl for selected SSL backend"
 #endif
@@ -994,8 +1011,14 @@ static const struct Curl_ssl *available_backends[] = {
 #if defined(USE_OPENSSL)
   &Curl_ssl_openssl,
 #endif
+#if defined(USE_SECTRANSP)
+  &Curl_ssl_sectransp,
+#endif
 #if defined(USE_SCHANNEL)
   &Curl_ssl_schannel,
+#endif
+#if defined(USE_BEARSSL)
+  &Curl_ssl_bearssl,
 #endif
 #if defined(USE_RUSTLS)
   &Curl_ssl_rustls,
@@ -1432,26 +1455,29 @@ static bool ssl_cf_data_pending(struct Curl_cfilter *cf,
   return result;
 }
 
-static CURLcode ssl_cf_send(struct Curl_cfilter *cf,
-                            struct Curl_easy *data,
-                            const void *buf, size_t blen,
-                            bool eos, size_t *pnwritten)
+static ssize_t ssl_cf_send(struct Curl_cfilter *cf,
+                           struct Curl_easy *data,
+                           const void *buf, size_t blen,
+                           bool eos, CURLcode *err)
 {
   struct ssl_connect_data *connssl = cf->ctx;
   struct cf_call_data save;
-  CURLcode result = CURLE_OK;
+  ssize_t nwritten = 0, early_written = 0;
 
   (void)eos;
-  *pnwritten = 0;
+  *err = CURLE_OK;
   CF_DATA_SAVE(save, cf, data);
 
   if(connssl->state == ssl_connection_deferred) {
     bool done = FALSE;
-    result = ssl_cf_connect_deferred(cf, data, buf, blen, &done);
-    if(result)
+    *err = ssl_cf_connect_deferred(cf, data, buf, blen, &done);
+    if(*err) {
+      nwritten = -1;
       goto out;
+    }
     else if(!done) {
-      result = CURLE_AGAIN;
+      *err = CURLE_AGAIN;
+      nwritten = -1;
       goto out;
     }
     DEBUGASSERT(connssl->state == ssl_connection_complete);
@@ -1460,12 +1486,12 @@ static CURLcode ssl_cf_send(struct Curl_cfilter *cf,
   if(connssl->earlydata_skip) {
     if(connssl->earlydata_skip >= blen) {
       connssl->earlydata_skip -= blen;
-      result = CURLE_OK;
-      *pnwritten = blen;
+      *err = CURLE_OK;
+      nwritten = (ssize_t)blen;
       goto out;
     }
     else {
-      *pnwritten = connssl->earlydata_skip;
+      early_written = connssl->earlydata_skip;
       buf = ((const char *)buf) + connssl->earlydata_skip;
       blen -= connssl->earlydata_skip;
       connssl->earlydata_skip = 0;
@@ -1473,56 +1499,56 @@ static CURLcode ssl_cf_send(struct Curl_cfilter *cf,
   }
 
   /* OpenSSL and maybe other TLS libs do not like 0-length writes. Skip. */
-  if(blen > 0) {
-    ssize_t nwritten;
-    nwritten = connssl->ssl_impl->send_plain(cf, data, buf, blen, &result);
-    if(nwritten > 0)
-      *pnwritten += (size_t)nwritten;
-  }
+  if(blen > 0)
+    nwritten = connssl->ssl_impl->send_plain(cf, data, buf, blen, err);
+
+  if(nwritten >= 0)
+    nwritten += early_written;
 
 out:
   CF_DATA_RESTORE(cf, save);
-  return result;
+  return nwritten;
 }
 
-static CURLcode ssl_cf_recv(struct Curl_cfilter *cf,
-                            struct Curl_easy *data, char *buf, size_t len,
-                            size_t *pnread)
+static ssize_t ssl_cf_recv(struct Curl_cfilter *cf,
+                           struct Curl_easy *data, char *buf, size_t len,
+                           CURLcode *err)
 {
   struct ssl_connect_data *connssl = cf->ctx;
   struct cf_call_data save;
-  CURLcode result = CURLE_OK;
   ssize_t nread;
 
   CF_DATA_SAVE(save, cf, data);
-  *pnread = 0;
+  *err = CURLE_OK;
   if(connssl->state == ssl_connection_deferred) {
     bool done = FALSE;
-    result = ssl_cf_connect_deferred(cf, data, NULL, 0, &done);
-    if(result)
+    *err = ssl_cf_connect_deferred(cf, data, NULL, 0, &done);
+    if(*err) {
+      nread = -1;
       goto out;
+    }
     else if(!done) {
-      result = CURLE_AGAIN;
+      *err = CURLE_AGAIN;
+      nread = -1;
       goto out;
     }
     DEBUGASSERT(connssl->state == ssl_connection_complete);
   }
 
-  nread = connssl->ssl_impl->recv_plain(cf, data, buf, len, &result);
+  nread = connssl->ssl_impl->recv_plain(cf, data, buf, len, err);
   if(nread > 0) {
     DEBUGASSERT((size_t)nread <= len);
-    *pnread = (size_t)nread;
   }
   else if(nread == 0) {
     /* eof */
-    result = CURLE_OK;
+    *err = CURLE_OK;
   }
 
 out:
-  CURL_TRC_CF(data, cf, "cf_recv(len=%zu) -> %d, %zd", len,
-              result, *pnread);
+  CURL_TRC_CF(data, cf, "cf_recv(len=%zu) -> %zd, %d", len,
+              nread, *err);
   CF_DATA_RESTORE(cf, save);
-  return result;
+  return nread;
 }
 
 static CURLcode ssl_cf_shutdown(struct Curl_cfilter *cf,

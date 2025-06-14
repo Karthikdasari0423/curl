@@ -27,6 +27,8 @@
 #include "warnless.h"
 #include "memdebug.h"
 
+#define TEST_HANG_TIMEOUT 60 * 1000
+
 #define NUM_URLS 4
 
 CURLcode test(char *URL)
@@ -71,7 +73,7 @@ CURLcode test(char *URL)
 
   easy_setopt(curl, CURLOPT_MAXCONNECTS, 3L);
 
-  /* get NUM_URLS easy handles */
+  /* get NUM_HANDLES easy handles */
   for(i = 0; i < NUM_URLS; i++) {
     /* specify target */
     curl_msnprintf(target_url, sizeof(target_url),

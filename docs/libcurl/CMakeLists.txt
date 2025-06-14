@@ -25,7 +25,6 @@
 curl_transform_makefile_inc("Makefile.inc" "${CMAKE_CURRENT_BINARY_DIR}/Makefile.inc.cmake")
 include("${CMAKE_CURRENT_BINARY_DIR}/Makefile.inc.cmake")
 
-# Generate man pages
 function(curl_add_manual_pages _listname)
   # Maximum number of files per command to stay within shell/OS limits
   if(CMAKE_HOST_UNIX)
@@ -79,8 +78,8 @@ curl_add_manual_pages(man_MANS)
 add_custom_target(curl-man ALL DEPENDS ${man_MANS})
 if(NOT CURL_DISABLE_INSTALL)
   set(_src "")
-  foreach(_file IN LISTS man_MANS)
-    list(APPEND _src "${CMAKE_CURRENT_BINARY_DIR}/${_file}")
+  foreach(_f IN LISTS man_MANS)
+    list(APPEND _src "${CMAKE_CURRENT_BINARY_DIR}/${_f}")
   endforeach()
   install(FILES ${_src} DESTINATION "${CMAKE_INSTALL_MANDIR}/man3")
   unset(_src)

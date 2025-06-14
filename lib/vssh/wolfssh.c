@@ -220,35 +220,37 @@ static void wssh_state(struct Curl_easy *data,
   sshc->state = nowstate;
 }
 
-static CURLcode wscp_send(struct Curl_easy *data, int sockindex,
-                          const void *mem, size_t len, bool eos,
-                          size_t *pnwritten)
+static ssize_t wscp_send(struct Curl_easy *data, int sockindex,
+                         const void *mem, size_t len, bool eos,
+                         CURLcode *err)
 {
+  ssize_t nwrite = 0;
   (void)data;
   (void)sockindex; /* we only support SCP on the fixed known primary socket */
   (void)mem;
   (void)len;
   (void)eos;
-  *pnwritten = 0;
-  return CURLE_OK;
+  (void)err;
+
+  return nwrite;
 }
 
-static CURLcode wscp_recv(struct Curl_easy *data, int sockindex,
-                          char *mem, size_t len, size_t *pnread)
+static ssize_t wscp_recv(struct Curl_easy *data, int sockindex,
+                         char *mem, size_t len, CURLcode *err)
 {
+  ssize_t nread = 0;
   (void)data;
   (void)sockindex; /* we only support SCP on the fixed known primary socket */
   (void)mem;
   (void)len;
-  *pnread = 0;
+  (void)err;
 
-  return CURLE_OK;
+  return nread;
 }
 
 /* return number of sent bytes */
-static CURLcode wsftp_send(struct Curl_easy *data, int sockindex,
-                           const void *mem, size_t len, bool eos,
-                           size_t *pnwritten)
+static ssize_t wsftp_send(struct Curl_easy *data, int sockindex,
+                          const void *mem, size_t len, bool eos, CURLcode *err)
 {
   struct connectdata *conn = data->conn;
   struct ssh_conn *sshc = Curl_conn_meta_get(conn, CURL_META_SSH_CONN);
@@ -257,10 +259,10 @@ static CURLcode wsftp_send(struct Curl_easy *data, int sockindex,
   (void)sockindex;
   (void)eos;
 
-  *pnwritten = 0;
-  if(!sshc)
-    return CURLE_FAILED_INIT;
-
+  if(!sshc) {
+    *err = CURLE_FAILED_INIT;
+    return -1;
+  }
   offset[0] = (word32)sshc->offset & 0xFFFFFFFF;
   offset[1] = (word32)(sshc->offset >> 32) & 0xFFFFFFFF;
 
@@ -273,30 +275,31 @@ static CURLcode wsftp_send(struct Curl_easy *data, int sockindex,
     rc = wolfSSH_get_error(sshc->ssh_session);
   if(rc == WS_WANT_READ) {
     conn->waitfor = KEEP_RECV;
-    return CURLE_AGAIN;
+    *err = CURLE_AGAIN;
+    return -1;
   }
   else if(rc == WS_WANT_WRITE) {
     conn->waitfor = KEEP_SEND;
-    return CURLE_AGAIN;
+    *err = CURLE_AGAIN;
+    return -1;
   }
   if(rc < 0) {
     failf(data, "wolfSSH_SFTP_SendWritePacket returned %d", rc);
-    return CURLE_SEND_ERROR;
+    return -1;
   }
   DEBUGASSERT(rc == (int)len);
-  *pnwritten = (size_t)rc;
-  sshc->offset += *pnwritten;
   infof(data, "sent %zu bytes SFTP from offset %" FMT_OFF_T,
-        *pnwritten, sshc->offset);
-  return CURLE_OK;
+        len, sshc->offset);
+  sshc->offset += len;
+  return (ssize_t)rc;
 }
 
 /*
  * Return number of received (decrypted) bytes
  * or <0 on error
  */
-static CURLcode wsftp_recv(struct Curl_easy *data, int sockindex,
-                           char *mem, size_t len, size_t *pnread)
+static ssize_t wsftp_recv(struct Curl_easy *data, int sockindex,
+                          char *mem, size_t len, CURLcode *err)
 {
   int rc;
   struct connectdata *conn = data->conn;
@@ -304,10 +307,10 @@ static CURLcode wsftp_recv(struct Curl_easy *data, int sockindex,
   word32 offset[2];
   (void)sockindex;
 
-  *pnread = 0;
-  if(!sshc)
-    return CURLE_FAILED_INIT;
-
+  if(!sshc) {
+    *err = CURLE_FAILED_INIT;
+    return -1;
+  }
   offset[0] = (word32)sshc->offset & 0xFFFFFFFF;
   offset[1] = (word32)(sshc->offset >> 32) & 0xFFFFFFFF;
 
@@ -319,22 +322,24 @@ static CURLcode wsftp_recv(struct Curl_easy *data, int sockindex,
     rc = wolfSSH_get_error(sshc->ssh_session);
   if(rc == WS_WANT_READ) {
     conn->waitfor = KEEP_RECV;
-    return CURLE_AGAIN;
+    *err = CURLE_AGAIN;
+    return -1;
   }
   else if(rc == WS_WANT_WRITE) {
     conn->waitfor = KEEP_SEND;
-    return CURLE_AGAIN;
+    *err = CURLE_AGAIN;
+    return -1;
   }
 
   DEBUGASSERT(rc <= (int)len);
 
   if(rc < 0) {
     failf(data, "wolfSSH_SFTP_SendReadPacket returned %d", rc);
-    return CURLE_RECV_ERROR;
+    return -1;
   }
-  *pnread = (size_t)rc;
-  sshc->offset += *pnread;
-  return CURLE_OK;
+  sshc->offset += len;
+
+  return (ssize_t)rc;
 }
 
 static void wssh_easy_dtor(void *key, size_t klen, void *entry)

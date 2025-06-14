@@ -25,12 +25,13 @@
 
 #include "memdebug.h"
 
-static size_t t1975_read_cb(char *ptr, size_t size, size_t nitems, void *userp)
+static size_t read_callback(char *buffer, size_t size, size_t nitems,
+                            void *userdata)
 {
-  (void)ptr; /* unused */
+  (void)buffer; /* unused */
   (void)size; /* unused */
   (void)nitems; /* unused */
-  (void)userp; /* unused */
+  (void)userdata; /* unused */
   return 0;
 }
 
@@ -54,7 +55,7 @@ CURLcode test(char *URL)
   }
 
   test_setopt(curl, CURLOPT_UPLOAD, 1L);
-  test_setopt(curl, CURLOPT_READFUNCTION, t1975_read_cb);
+  test_setopt(curl, CURLOPT_READFUNCTION, read_callback);
   test_setopt(curl, CURLOPT_VERBOSE, 1L);
   test_setopt(curl, CURLOPT_AWS_SIGV4, "aws:amz:us-east-1:s3");
   test_setopt(curl, CURLOPT_USERPWD, "xxx");

@@ -28,7 +28,7 @@ http
 HTTP Retry-After header parsing using a date
 </name>
 <tool>
-lib1594
+lib%TESTNUMBER
 </tool>
 <command>
 http://%HOSTIP:%HTTPPORT/%TESTNUMBER

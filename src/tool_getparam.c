@@ -1993,7 +1993,7 @@ static ParameterError opt_bool(struct GlobalConfig *global,
     config->doh_verifystatus = toggle;
     break;
   case C_FALSE_START: /* --false-start */
-    opt_depr(global, a);
+    config->falsestart = toggle;
     break;
   case C_SSL_NO_REVOKE: /* --ssl-no-revoke */
     config->ssl_no_revoke = toggle;

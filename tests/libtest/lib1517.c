@@ -25,14 +25,16 @@
 
 #include "memdebug.h"
 
-struct t1517_WriteThis {
-  const char *readptr;
+static char testdata[]="this is what we post to the silly web server\n";
+
+struct WriteThis {
+  char *readptr;
   size_t sizeleft;
 };
 
-static size_t t1517_read_cb(char *ptr, size_t size, size_t nmemb, void *userp)
+static size_t read_callback(char *ptr, size_t size, size_t nmemb, void *userp)
 {
-  struct t1517_WriteThis *pooh = (struct t1517_WriteThis *)userp;
+  struct WriteThis *pooh = (struct WriteThis *)userp;
   size_t tocopy = size * nmemb;
 
   /* Wait one second before return POST data          *
@@ -53,13 +55,10 @@ static size_t t1517_read_cb(char *ptr, size_t size, size_t nmemb, void *userp)
 
 CURLcode test(char *URL)
 {
-  static const char testdata[] =
-    "this is what we post to the silly web server\n";
-
   CURL *curl;
   CURLcode res = CURLE_OK;
 
-  struct t1517_WriteThis pooh;
+  struct WriteThis pooh;
 
   if(!strcmp(URL, "check")) {
 #if (defined(_WIN32) || defined(__CYGWIN__))
@@ -97,7 +96,7 @@ CURLcode test(char *URL)
   test_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)pooh.sizeleft);
 
   /* we want to use our own read function */
-  test_setopt(curl, CURLOPT_READFUNCTION, t1517_read_cb);
+  test_setopt(curl, CURLOPT_READFUNCTION, read_callback);
 
   /* pointer to pass to our read function */
   test_setopt(curl, CURLOPT_READDATA, &pooh);

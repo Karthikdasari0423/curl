@@ -25,6 +25,13 @@
 
 #include "memdebug.h"
 
+
+static char testdata[] =
+  "this is what we post to the silly web server";
+
+static const char testname[] = "fieldname";
+
+
 /* This test attempts to use all form API features that are not
  * used elsewhere.
  */
@@ -52,10 +59,6 @@ CURLcode test(char *URL)
   size_t formlength = 0;
   char flbuf[32];
   long contentlength = 0;
-
-  static const char testname[] = "fieldname";
-  static char testdata[] =
-    "this is what we post to the silly web server";
 
   if(curl_global_init(CURL_GLOBAL_ALL) != CURLE_OK) {
     curl_mfprintf(stderr, "curl_global_init() failed\n");

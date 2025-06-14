@@ -26,12 +26,14 @@
 #include "urldata.h"
 #include "hsts.h"
 
-static CURLcode unit_setup(void)
+static CURLcode
+unit_setup(void)
 {
   return CURLE_OK;
 }
 
-static void unit_stop(void)
+static void
+unit_stop(void)
 {
   curl_global_cleanup();
 }

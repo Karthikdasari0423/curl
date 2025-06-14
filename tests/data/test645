@@ -47,7 +47,7 @@ http
 </server>
 # tool is what to use instead of 'curl'
 <tool>
-lib643
+lib%TESTNUMBER
 </tool>
 
 <name>

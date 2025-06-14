@@ -39,7 +39,6 @@
 #  include <fcntl.h>
 #endif
 
-#include "testutil.h"
 #include "warnless.h"
 #include "memdebug.h"
 
@@ -49,13 +48,12 @@
                              ((int)((unsigned char)((p)[3]))))
 
 #define RTP_DATA_SIZE 12
+static const char *RTP_DATA = "$_1234\n\0Rsdf";
 
 static int rtp_packet_count = 0;
 
 static size_t rtp_write(char *ptr, size_t size, size_t nmemb, void *stream)
 {
-  static const char *RTP_DATA = "$_1234\n\0Rsdf";
-
   char *data = (char *)ptr;
   int channel = RTP_PKT_CHANNEL(data);
   int message_size;
@@ -97,6 +95,12 @@ static size_t rtp_write(char *ptr, size_t size, size_t nmemb, void *stream)
   return size * nmemb;
 }
 
+/* build request url */
+static char *suburl(const char *base, int i)
+{
+  return curl_maprintf("%s%.4d", base, i);
+}
+
 CURLcode test(char *URL)
 {
   CURLcode res;
@@ -125,7 +129,7 @@ CURLcode test(char *URL)
   }
   test_setopt(curl, CURLOPT_URL, URL);
 
-  stream_uri = tutil_suburl(URL, request++);
+  stream_uri = suburl(URL, request++);
   if(!stream_uri) {
     res = TEST_ERR_MAJOR_BAD;
     goto test_cleanup;
@@ -147,7 +151,7 @@ CURLcode test(char *URL)
     goto test_cleanup;
 
   /* This PLAY starts the interleave */
-  stream_uri = tutil_suburl(URL, request++);
+  stream_uri = suburl(URL, request++);
   if(!stream_uri) {
     res = TEST_ERR_MAJOR_BAD;
     goto test_cleanup;
@@ -162,7 +166,7 @@ CURLcode test(char *URL)
     goto test_cleanup;
 
   /* The DESCRIBE request will try to consume data after the Content */
-  stream_uri = tutil_suburl(URL, request++);
+  stream_uri = suburl(URL, request++);
   if(!stream_uri) {
     res = TEST_ERR_MAJOR_BAD;
     goto test_cleanup;
@@ -176,7 +180,7 @@ CURLcode test(char *URL)
   if(res)
     goto test_cleanup;
 
-  stream_uri = tutil_suburl(URL, request++);
+  stream_uri = suburl(URL, request++);
   if(!stream_uri) {
     res = TEST_ERR_MAJOR_BAD;
     goto test_cleanup;

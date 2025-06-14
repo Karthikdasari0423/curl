@@ -58,7 +58,6 @@ if(NOT GSS_ROOT_DIR AND NOT "$ENV{GSS_ROOT_DIR}")
     find_package(PkgConfig QUIET)
     pkg_search_module(_GSS ${_gnu_modname} ${_mit_modname} ${_heimdal_modname})
     list(APPEND _gss_root_hints "${_GSS_PREFIX}")
-    set(_gss_version "${_GSS_VERSION}")
   endif()
   if(WIN32)
     list(APPEND _gss_root_hints "[HKEY_LOCAL_MACHINE\\SOFTWARE\\MIT\\Kerberos;InstallDir]")
@@ -136,14 +135,14 @@ if(NOT _GSS_FOUND)  # Not found by pkg-config. Let us take more traditional appr
 
     execute_process(
       COMMAND ${_gss_configure_script} "--version"
-      OUTPUT_VARIABLE _gss_version
+      OUTPUT_VARIABLE _GSS_VERSION
       RESULT_VARIABLE _gss_configure_failed
       OUTPUT_STRIP_TRAILING_WHITESPACE
     )
 
     # Older versions may not have the "--version" parameter. In this case we just do not care.
     if(_gss_configure_failed)
-      set(_gss_version 0)
+      set(_GSS_VERSION 0)
     endif()
 
     execute_process(
@@ -270,23 +269,23 @@ else()
   if(_GSS_MODULE_NAME STREQUAL _gnu_modname OR _GSS_${_gnu_modname}_VERSION)
     set(GSS_FLAVOUR "GNU")
     set(GSS_PC_REQUIRES "gss")
-    if(NOT _gss_version)  # for old CMake versions?
-      set(_gss_version ${_GSS_${_gnu_modname}_VERSION})
+    if(NOT _GSS_VERSION)  # for old CMake versions?
+      set(_GSS_VERSION ${_GSS_${_gnu_modname}_VERSION})
     endif()
   elseif(_GSS_MODULE_NAME STREQUAL _mit_modname OR _GSS_${_mit_modname}_VERSION)
     set(GSS_FLAVOUR "MIT")
     set(GSS_PC_REQUIRES "mit-krb5-gssapi")
-    if(NOT _gss_version)  # for old CMake versions?
-      set(_gss_version ${_GSS_${_mit_modname}_VERSION})
+    if(NOT _GSS_VERSION)  # for old CMake versions?
+      set(_GSS_VERSION ${_GSS_${_mit_modname}_VERSION})
     endif()
   else()
     set(GSS_FLAVOUR "Heimdal")
     set(GSS_PC_REQUIRES "heimdal-gssapi")
-    if(NOT _gss_version)  # for old CMake versions?
-      set(_gss_version ${_GSS_${_heimdal_modname}_VERSION})
+    if(NOT _GSS_VERSION)  # for old CMake versions?
+      set(_GSS_VERSION ${_GSS_${_heimdal_modname}_VERSION})
     endif()
   endif()
-  message(STATUS "Found GSS/${GSS_FLAVOUR} (via pkg-config): ${_GSS_INCLUDE_DIRS} (found version \"${_gss_version}\")")
+  message(STATUS "Found GSS/${GSS_FLAVOUR} (via pkg-config): ${_GSS_INCLUDE_DIRS} (found version \"${_GSS_VERSION}\")")
 endif()
 
 string(REPLACE ";" " " _GSS_CFLAGS "${_GSS_CFLAGS}")
@@ -295,7 +294,7 @@ set(GSS_INCLUDE_DIRS ${_GSS_INCLUDE_DIRS})
 set(GSS_LIBRARIES ${_GSS_LIBRARIES})
 set(GSS_LIBRARY_DIRS ${_GSS_LIBRARY_DIRS})
 set(GSS_CFLAGS ${_GSS_CFLAGS})
-set(GSS_VERSION ${_gss_version})
+set(GSS_VERSION ${_GSS_VERSION})
 
 if(GSS_FLAVOUR)
   if(NOT GSS_VERSION AND GSS_FLAVOUR STREQUAL "Heimdal")
@@ -354,5 +353,5 @@ mark_as_advanced(
   _GSS_LIBRARY_DIRS
   _GSS_MODULE_NAME
   _GSS_PREFIX
-  _gss_version
+  _GSS_VERSION
 )

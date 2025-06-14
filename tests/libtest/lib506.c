@@ -22,20 +22,19 @@
  *
  ***************************************************************************/
 #include "test.h"
-
-#include "testutil.h"
 #include "memdebug.h"
 
+static const char * const HOSTHEADER = "Host: www.host.foo.com";
 #define JAR libtest_arg2
 #define THREADS 2
 
 /* struct containing data of a thread */
-struct t506_Tdata {
+struct Tdata {
   CURLSH *share;
   char *url;
 };
 
-struct t506_userdata {
+struct userdata {
   const char *text;
   int counter;
 };
@@ -43,11 +42,11 @@ struct t506_userdata {
 static int locks[3];
 
 /* lock callback */
-static void t506_test_lock(CURL *handle, curl_lock_data data,
-                           curl_lock_access laccess, void *useptr)
+static void test_lock(CURL *handle, curl_lock_data data,
+                      curl_lock_access laccess, void *useptr)
 {
   const char *what;
-  struct t506_userdata *user = (struct t506_userdata *)useptr;
+  struct userdata *user = (struct userdata *)useptr;
   int locknum;
 
   (void)handle;
@@ -83,10 +82,10 @@ static void t506_test_lock(CURL *handle, curl_lock_data data,
 }
 
 /* unlock callback */
-static void t506_test_unlock(CURL *handle, curl_lock_data data, void *useptr)
+static void test_unlock(CURL *handle, curl_lock_data data, void *useptr)
 {
   const char *what;
-  struct t506_userdata *user = (struct t506_userdata *)useptr;
+  struct userdata *user = (struct userdata *)useptr;
   int locknum;
   (void)handle;
   switch(data) {
@@ -118,19 +117,21 @@ static void t506_test_unlock(CURL *handle, curl_lock_data data, void *useptr)
   user->counter++;
 }
 
+
 /* build host entry */
 static struct curl_slist *sethost(struct curl_slist *headers)
 {
   (void)headers;
-  return curl_slist_append(NULL, "Host: www.host.foo.com");
+  return curl_slist_append(NULL, HOSTHEADER);
 }
 
+
 /* the dummy thread function */
-static void *t506_test_fire(void *ptr)
+static void *test_fire(void *ptr)
 {
   CURLcode code;
   struct curl_slist *headers;
-  struct t506_Tdata *tdata = (struct t506_Tdata*)ptr;
+  struct Tdata *tdata = (struct Tdata*)ptr;
   CURL *curl;
 
   curl = curl_easy_init();
@@ -162,6 +163,14 @@ static void *t506_test_fire(void *ptr)
   return NULL;
 }
 
+
+/* build request url */
+static char *suburl(const char *base, int i)
+{
+  return curl_maprintf("%s%.4d", base, i);
+}
+
+
 /* test function */
 CURLcode test(char *URL)
 {
@@ -169,14 +178,14 @@ CURLcode test(char *URL)
   CURLSHcode scode = CURLSHE_OK;
   CURLcode code = CURLE_OK;
   char *url = NULL;
-  struct t506_Tdata tdata;
+  struct Tdata tdata;
   CURL *curl;
   CURLSH *share;
   struct curl_slist *headers = NULL;
   struct curl_slist *cookies = NULL;
   struct curl_slist *next_cookie = NULL;
   int i;
-  struct t506_userdata user;
+  struct userdata user;
 
   user.text = "Pigs in space";
   user.counter = 0;
@@ -198,11 +207,11 @@ CURLcode test(char *URL)
 
   if(CURLSHE_OK == scode) {
     curl_mprintf("CURLSHOPT_LOCKFUNC\n");
-    scode = curl_share_setopt(share, CURLSHOPT_LOCKFUNC, t506_test_lock);
+    scode = curl_share_setopt(share, CURLSHOPT_LOCKFUNC, test_lock);
   }
   if(CURLSHE_OK == scode) {
     curl_mprintf("CURLSHOPT_UNLOCKFUNC\n");
-    scode = curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, t506_test_unlock);
+    scode = curl_share_setopt(share, CURLSHOPT_UNLOCKFUNC, test_unlock);
   }
   if(CURLSHE_OK == scode) {
     curl_mprintf("CURLSHOPT_USERDATA\n");
@@ -256,12 +265,12 @@ CURLcode test(char *URL)
   for(i = 1; i <= THREADS; i++) {
 
     /* set thread data */
-    tdata.url   = tutil_suburl(URL, i); /* must be curl_free()d */
+    tdata.url   = suburl(URL, i); /* must be curl_free()d */
     tdata.share = share;
 
     /* simulate thread, direct call of "thread" function */
     curl_mprintf("*** run %d\n",i);
-    t506_test_fire(&tdata);
+    test_fire(&tdata);
 
     curl_free(tdata.url);
   }
@@ -277,7 +286,7 @@ CURLcode test(char *URL)
     return TEST_ERR_MAJOR_BAD;
   }
 
-  url = tutil_suburl(URL, i);
+  url = suburl(URL, i);
   headers = sethost(NULL);
   test_setopt(curl, CURLOPT_HTTPHEADER, headers);
   test_setopt(curl, CURLOPT_URL,        url);
@@ -304,7 +313,7 @@ CURLcode test(char *URL)
     curl_global_cleanup();
     return TEST_ERR_MAJOR_BAD;
   }
-  url = tutil_suburl(URL, i);
+  url = suburl(URL, i);
   headers = sethost(NULL);
   test_setopt(curl, CURLOPT_HTTPHEADER, headers);
   test_setopt(curl, CURLOPT_URL,        url);

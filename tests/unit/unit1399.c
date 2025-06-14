@@ -28,13 +28,14 @@
 
 static int usec_magnitude = 1000000;
 
-static CURLcode unit_setup(void)
+static bool unit_setup(void)
 {
   return CURLE_OK;
 }
 
 static void unit_stop(void)
 {
+
 }
 
 /*

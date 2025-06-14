@@ -34,7 +34,9 @@
  * * GnuTLS
  * * wolfSSL
  * * Schannel SSPI
+ * * Secure Transport (Darwin)
  * * mbedTLS
+ * * BearSSL
  * * Rustls
  * Skip the backend if it does not support the required algorithm */
 

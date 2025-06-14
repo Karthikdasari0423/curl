@@ -211,7 +211,7 @@ static ssize_t xfer_recv_resp(struct Curl_easy *data,
                               bool eos_reliable,
                               CURLcode *err)
 {
-  size_t nread;
+  ssize_t nread;
 
   DEBUGASSERT(blen > 0);
   /* If we are reading BODY data and the connection does NOT handle EOF
@@ -252,7 +252,8 @@ static ssize_t xfer_recv_resp(struct Curl_easy *data,
     }
     DEBUGF(infof(data, "sendrecv_dl: we are done"));
   }
-  return (ssize_t)nread;
+  DEBUGASSERT(nread >= 0);
+  return nread;
 }
 
 /*
@@ -953,7 +954,7 @@ CURLcode Curl_xfer_send(struct Curl_easy *data,
 
 CURLcode Curl_xfer_recv(struct Curl_easy *data,
                         char *buf, size_t blen,
-                        size_t *pnrcvd)
+                        ssize_t *pnrcvd)
 {
   int sockindex;
 

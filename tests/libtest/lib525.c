@@ -29,6 +29,8 @@
 #include "warnless.h"
 #include "memdebug.h"
 
+#define TEST_HANG_TIMEOUT 60 * 1000
+
 CURLcode test(char *URL)
 {
   CURLcode res = CURLE_OK;
@@ -42,7 +44,13 @@ CURLcode test(char *URL)
   start_test_timing();
 
   if(!libtest_arg2) {
-    curl_mfprintf(stderr, "Usage: test [url] [uploadfile]\n");
+#ifdef LIB529
+    /* test 529 */
+    curl_mfprintf(stderr, "Usage: lib529 [url] [uploadfile]\n");
+#else
+    /* test 525 */
+    curl_mfprintf(stderr, "Usage: lib525 [url] [uploadfile]\n");
+#endif
     return TEST_ERR_USAGE;
   }
 
@@ -137,20 +145,21 @@ CURLcode test(char *URL)
 
 test_cleanup:
 
-  if(testnum == 529) {
-    /* proper cleanup sequence - type PA */
-    curl_multi_remove_handle(m, curl);
-    curl_multi_cleanup(m);
-    curl_easy_cleanup(curl);
-    curl_global_cleanup();
-  }
-  else { /* testnum == 525 */
-    /* proper cleanup sequence - type PB */
-    curl_multi_remove_handle(m, curl);
-    curl_easy_cleanup(curl);
-    curl_multi_cleanup(m);
-    curl_global_cleanup();
-  }
+#ifdef LIB529
+  /* test 529 */
+  /* proper cleanup sequence - type PA */
+  curl_multi_remove_handle(m, curl);
+  curl_multi_cleanup(m);
+  curl_easy_cleanup(curl);
+  curl_global_cleanup();
+#else
+  /* test 525 */
+  /* proper cleanup sequence - type PB */
+  curl_multi_remove_handle(m, curl);
+  curl_easy_cleanup(curl);
+  curl_multi_cleanup(m);
+  curl_global_cleanup();
+#endif
 
   /* close the local file */
   fclose(hd_src);

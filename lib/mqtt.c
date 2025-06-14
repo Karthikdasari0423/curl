@@ -428,13 +428,14 @@ static CURLcode mqtt_recv_atleast(struct Curl_easy *data, size_t nbytes)
 
   if(rlen < nbytes) {
     unsigned char readbuf[1024];
-    size_t nread;
+    ssize_t nread;
 
     DEBUGASSERT(nbytes - rlen < sizeof(readbuf));
     result = Curl_xfer_recv(data, (char *)readbuf, nbytes - rlen, &nread);
     if(result)
       return result;
-    if(curlx_dyn_addn(&mq->recvbuf, readbuf, nread))
+    DEBUGASSERT(nread >= 0);
+    if(curlx_dyn_addn(&mq->recvbuf, readbuf, (size_t)nread))
       return CURLE_OUT_OF_MEMORY;
     rlen = curlx_dyn_len(&mq->recvbuf);
   }
@@ -702,7 +703,7 @@ static CURLcode mqtt_read_publish(struct Curl_easy *data, bool *done)
 {
   CURLcode result = CURLE_OK;
   struct connectdata *conn = data->conn;
-  size_t nread;
+  ssize_t nread;
   size_t remlen;
   struct mqtt_conn *mqtt = Curl_conn_meta_get(conn, CURL_META_MQTT_CONN);
   struct MQTT *mq = Curl_meta_get(data, CURL_META_MQTT_EASY);
@@ -867,7 +868,7 @@ static CURLcode mqtt_doing(struct Curl_easy *data, bool *done)
 {
   struct MQTT *mq = Curl_meta_get(data, CURL_META_MQTT_EASY);
   CURLcode result = CURLE_OK;
-  size_t nread;
+  ssize_t nread;
   unsigned char recvbyte;
   struct mqtt_conn *mqtt = Curl_conn_meta_get(data->conn, CURL_META_MQTT_CONN);
 

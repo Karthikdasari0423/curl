@@ -34,7 +34,7 @@ static void unit_stop(void)
 {
 
 }
-#if defined(USE_GNUTLS) || defined(USE_SCHANNEL)
+#if defined(USE_GNUTLS) || defined(USE_SCHANNEL) || defined(USE_SECTRANSP)
 
 /* cert captured from gdb when connecting to curl.se on October 26
    2018 */

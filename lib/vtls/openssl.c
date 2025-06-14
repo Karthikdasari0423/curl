@@ -122,12 +122,6 @@
 static void ossl_provider_cleanup(struct Curl_easy *data);
 #endif
 
-#if (OPENSSL_VERSION_NUMBER >= 0x10100000L && \
-     !defined(LIBRESSL_VERSION_NUMBER) && \
-     !defined(OPENSSL_IS_BORINGSSL))
-  #define HAVE_SSL_CTX_SET_DEFAULT_READ_BUFFER_LEN 1
-#endif
-
 #include "../curlx/warnless.h"
 
 /* The last #include files should be: */
@@ -723,23 +717,22 @@ static int ossl_bio_cf_out_write(BIO *bio, const char *buf, int blen)
   struct ssl_connect_data *connssl = cf->ctx;
   struct ossl_ctx *octx = (struct ossl_ctx *)connssl->backend;
   struct Curl_easy *data = CF_DATA_CURRENT(cf);
-  size_t nwritten;
-  CURLcode result;
+  ssize_t nwritten;
+  CURLcode result = CURLE_SEND_ERROR;
 
   DEBUGASSERT(data);
   if(blen < 0)
     return 0;
 
-  result = Curl_conn_cf_send(cf->next, data, buf, (size_t)blen, FALSE,
-                             &nwritten);
-  CURL_TRC_CF(data, cf, "ossl_bio_cf_out_write(len=%d) -> %d, %zu",
-              blen, result, nwritten);
+  nwritten = Curl_conn_cf_send(cf->next, data, buf, (size_t)blen, FALSE,
+                               &result);
+  CURL_TRC_CF(data, cf, "ossl_bio_cf_out_write(len=%d) -> %d, err=%d",
+              blen, (int)nwritten, result);
   BIO_clear_retry_flags(bio);
   octx->io_result = result;
-  if(result) {
+  if(nwritten < 0) {
     if(CURLE_AGAIN == result)
       BIO_set_retry_write(bio);
-    return -1;
   }
   return (int)nwritten;
 }
@@ -750,8 +743,8 @@ static int ossl_bio_cf_in_read(BIO *bio, char *buf, int blen)
   struct ssl_connect_data *connssl = cf->ctx;
   struct ossl_ctx *octx = (struct ossl_ctx *)connssl->backend;
   struct Curl_easy *data = CF_DATA_CURRENT(cf);
-  size_t nread;
-  CURLcode result, r2;
+  ssize_t nread;
+  CURLcode result = CURLE_RECV_ERROR;
 
   DEBUGASSERT(data);
   /* OpenSSL catches this case, so should we. */
@@ -760,33 +753,31 @@ static int ossl_bio_cf_in_read(BIO *bio, char *buf, int blen)
   if(blen < 0)
     return 0;
 
-  result = Curl_conn_cf_recv(cf->next, data, buf, (size_t)blen, &nread);
-  CURL_TRC_CF(data, cf, "ossl_bio_cf_in_read(len=%d) -> %d, %zu",
-              blen, result, nread);
+  nread = Curl_conn_cf_recv(cf->next, data, buf, (size_t)blen, &result);
+  CURL_TRC_CF(data, cf, "ossl_bio_cf_in_read(len=%d) -> %d, err=%d",
+              blen, (int)nread, result);
   BIO_clear_retry_flags(bio);
   octx->io_result = result;
-  if(result) {
+  if(nread < 0) {
     if(CURLE_AGAIN == result)
       BIO_set_retry_read(bio);
   }
-  else {
-    /* feeding data to OpenSSL means SSL_read() might succeed */
-    connssl->input_pending = TRUE;
-    if(nread == 0)
-      connssl->peer_closed = TRUE;
+  else if(nread == 0) {
+    connssl->peer_closed = TRUE;
   }
 
   /* Before returning server replies to the SSL instance, we need
    * to have setup the x509 store or verification will fail. */
   if(!octx->x509_store_setup) {
-    r2 = Curl_ssl_setup_x509_store(cf, data, octx->ssl_ctx);
-    if(r2) {
-      octx->io_result = r2;
+    result = Curl_ssl_setup_x509_store(cf, data, octx->ssl_ctx);
+    if(result) {
+      octx->io_result = result;
       return -1;
     }
     octx->x509_store_setup = TRUE;
   }
-  return result ? -1 : (int)nread;
+
+  return (int)nread;
 }
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
@@ -4121,21 +4112,6 @@ CURLcode Curl_ossl_ctx_init(struct ossl_ctx *octx,
   }
 
   SSL_CTX_set_options(octx->ssl_ctx, ctx_options);
-  SSL_CTX_set_read_ahead(octx->ssl_ctx, 1);
-
-  /* Max TLS1.2 record size 0x4000 + 0x800.
-     OpenSSL supports processing "jumbo TLS record" (8 TLS records) in one go
-     for some algorithms, so match that here.
-     Experimentation shows that a slightly larger buffer is needed
-      to avoid short reads.
-
-     However using a large buffer (8 packets) actually decreases performance.
-     4 packets is better.
-   */
-
-#ifdef HAVE_SSL_CTX_SET_DEFAULT_READ_BUFFER_LEN
-  SSL_CTX_set_default_read_buffer_len(octx->ssl_ctx, 0x401e * 4);
-#endif
 
 #ifdef SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER
   /* We do retry writes sometimes from another buffer address */
@@ -5219,8 +5195,13 @@ static bool ossl_data_pending(struct Curl_cfilter *cf,
                               const struct Curl_easy *data)
 {
   struct ssl_connect_data *connssl = cf->ctx;
+  struct ossl_ctx *octx = (struct ossl_ctx *)connssl->backend;
+
   (void)data;
-  return connssl->input_pending;
+  DEBUGASSERT(connssl && octx);
+  if(octx->ssl && SSL_pending(octx->ssl))
+    return TRUE;
+  return FALSE;
 }
 
 static ssize_t ossl_send(struct Curl_cfilter *cf,
@@ -5383,45 +5364,35 @@ static ssize_t ossl_recv(struct Curl_cfilter *cf,
         nread = -1;
         goto out;
       }
-      else if(err == SSL_ERROR_SYSCALL) {
-        if(octx->io_result) {
-          /* logging handling in underlying filter already */
-          *curlcode = octx->io_result;
-        }
-        else if(connssl->peer_closed) {
-          failf(data, "Connection closed abruptly");
-          *curlcode = CURLE_RECV_ERROR;
-        }
+      /* For debug builds be a little stricter and error on any
+         SSL_ERROR_SYSCALL. For example a server may have closed the connection
+         abruptly without a close_notify alert. For compatibility with older
+         peers we do not do this by default. #4624
+
+         We can use this to gauge how many users may be affected, and
+         if it goes ok eventually transition to allow in dev and release with
+         the newest OpenSSL: #if (OPENSSL_VERSION_NUMBER >= 0x10101000L) */
+#ifdef DEBUGBUILD
+      if(err == SSL_ERROR_SYSCALL) {
+        int sockerr = SOCKERRNO;
+        if(sockerr)
+          Curl_strerror(sockerr, error_buffer, sizeof(error_buffer));
         else {
-          /* We should no longer get here nowadays. But handle
-           * the error in case of some weirdness in the OSSL stack */
-          int sockerr = SOCKERRNO;
-          if(sockerr)
-            Curl_strerror(sockerr, error_buffer, sizeof(error_buffer));
-          else {
-            msnprintf(error_buffer, sizeof(error_buffer),
-                      "Connection closed abruptly");
-          }
-          failf(data, OSSL_PACKAGE " SSL_read: %s, errno %d",
-                error_buffer, sockerr);
-          *curlcode = CURLE_RECV_ERROR;
+          msnprintf(error_buffer, sizeof(error_buffer),
+                    "Connection closed abruptly");
         }
+        failf(data, OSSL_PACKAGE " SSL_read: %s, errno %d"
+              " (Fatal because this is a curl debug build)",
+              error_buffer, sockerr);
+        *curlcode = CURLE_RECV_ERROR;
         nread = -1;
         goto out;
       }
+#endif
     }
   }
 
 out:
-  if(!nread || ((nread < 0) && (*curlcode == CURLE_AGAIN))) {
-    /* This happens when:
-     * - we read an EOF
-     * - OpenSSLs buffers are empty, there is no more data
-     * - OpenSSL read is blocked on writing something first
-     * - an incomplete TLS packet is buffered that cannot be read
-     *   until more data arrives */
-    connssl->input_pending = FALSE;
-  }
   return nread;
 }
 
@@ -5674,6 +5645,7 @@ const struct Curl_ssl Curl_ssl_openssl = {
   ossl_set_engine,          /* set_engine or provider */
   ossl_set_engine_default,  /* set_engine_default */
   ossl_engines_list,        /* engines_list */
+  NULL,                     /* false_start */
 #ifndef OPENSSL_NO_SHA256
   ossl_sha256sum,           /* sha256sum */
 #else
