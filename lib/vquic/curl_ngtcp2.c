@@ -835,7 +835,7 @@ static ngtcp2_callbacks ng_callbacks = {
   NULL, /* recv_client_initial */
   ngtcp2_crypto_recv_crypto_data_cb,
   cf_ngtcp2_handshake_completed,
-  NULL, /* recv_version_negotiation */
+  ngtcp2_crypto_recv_version_negotiation_cb, /* recv_version_negotiation */
   ngtcp2_crypto_encrypt_cb,
   ngtcp2_crypto_decrypt_cb,
   ngtcp2_crypto_hp_mask_cb,
