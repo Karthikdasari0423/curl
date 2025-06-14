@@ -2517,7 +2517,7 @@ static const struct alpn_spec ALPN_SPEC_H3 = {
 
   /* Note: ctx->is_vn_retry and ctx->negotiated_version are hypothetical
      and would be set by actual VN handling logic, not implemented here. */
-  if(ctx->q.is_vn_retry && data->set.verbose) {
+  if(ctx->is_vn_retry && data->set.verbose) {
     /* If it's a VN retry, log the version we are now attempting.
        The actual `negotiated_version` would ideally be passed or stored in ctx.
        For now, client_chosen_version will reflect the new attempt. */
