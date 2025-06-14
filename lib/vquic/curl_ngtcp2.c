@@ -87,6 +87,9 @@ static const uint32_t available_versions_v2[] = {
   NGTCP2_PROTO_VER_V2,
   NGTCP2_PROTO_VER_V1
 };
+static const uint32_t available_versions_v2_only[] = {
+  NGTCP2_PROTO_VER_V2
+};
 
 #define QUIC_MAX_STREAMS (256*1024)
 #define QUIC_MAX_DATA (1*1024*1024)
@@ -167,6 +170,10 @@ struct cf_ngtcp2_ctx {
   BIT(earlydata_accepted);           /* 0RTT was acceptd by server */
   BIT(is_vn_retry);                  /* For logging: TRUE if this is a VN retry */
   BIT(shutdown_started);             /* queued shutdown packets */
+  uint32_t negotiated_version_to_retry;
+  BIT(vn_retry_needed);
+  long initial_httpwant;
+  uint32_t current_attempt_version;
 };
 
 /* How to access `call_data` from a cf_ngtcp2 filter */
@@ -186,6 +193,10 @@ static void cf_ngtcp2_ctx_init(struct cf_ngtcp2_ctx *ctx)
                   H3_STREAM_POOL_SPARES);
   curlx_dyn_init(&ctx->scratch, CURL_MAX_HTTP_HEADER);
   Curl_uint_hash_init(&ctx->streams, 63, h3_stream_hash_free);
+  ctx->negotiated_version_to_retry = 0;
+  ctx->vn_retry_needed = FALSE;
+  ctx->initial_httpwant = 0;
+  ctx->current_attempt_version = 0;
   ctx->initialized = TRUE;
 }
 
@@ -458,18 +469,36 @@ static void quic_settings(struct cf_ngtcp2_ctx *ctx,
   s->log_printf = NULL;
 #endif
 
-  if(data->set.httpwant == CURL_HTTP_VERSION_3_V2) {
+  // Determine original_version based on the very first user preference
+  if(ctx->initial_httpwant == CURL_HTTP_VERSION_3_V2) {
     s->original_version = NGTCP2_PROTO_VER_V2;
-    s->available_versions = available_versions_v2;
-    s->available_versionslen = sizeof(available_versions_v2) /
-                                sizeof(available_versions_v2[0]);
   }
   else {
-    /* Default to V1 if not V2 or if data is NULL (should not happen in practice here) */
     s->original_version = NGTCP2_PROTO_VER_V1;
-    s->available_versions = available_versions_v1;
-    s->available_versionslen = sizeof(available_versions_v1) /
-                                sizeof(available_versions_v1[0]);
+  }
+
+  if(ctx->current_attempt_version != 0) { // VN re-attempt
+    // For a re-attempt, we *must* try the version ngtcp2 negotiated.
+    // available_versions should contain only this version.
+    // preferred_versions also set to this single version.
+    s->available_versions = (ctx->current_attempt_version == NGTCP2_PROTO_VER_V1) ?
+                             available_versions_v1 : available_versions_v2_only;
+    s->available_versionslen = 1;
+    s->preferred_versions = s->available_versions;
+    s->preferred_versionslen = 1;
+     // Ensure client_chosen_version in ngtcp2_conn_client_new matches this.
+  }
+  else if(ctx->initial_httpwant == CURL_HTTP_VERSION_3_V2) {
+    s->available_versions = available_versions_v2; // {V2, V1}
+    s->available_versionslen = 2;
+    s->preferred_versions = available_versions_v2; // Prefer V2 then V1
+    s->preferred_versionslen = 2;
+  }
+  else { // Default to V1
+    s->available_versions = available_versions_v1; // {V1}
+    s->available_versionslen = 1;
+    s->preferred_versions = available_versions_v1;
+    s->preferred_versionslen = 1;
   }
 
   s->initial_ts = pktx->ts;
@@ -1743,26 +1772,37 @@ static CURLcode recv_pkt(const unsigned char *pkt, size_t pktlen,
   if(rv) {
     if(rv == NGTCP2_ERR_RECV_VERSION_NEGOTIATION) {
       if(pktx->data->set.verbose) {
-        uint32_t negotiated_version;
-        infof(pktx->data, "QUIC: Received Version Negotiation packet from server");
-        negotiated_version = ngtcp2_conn_get_negotiated_version(ctx->qconn);
-        if(negotiated_version != 0) { /* Assuming 0 means no version yet or error */
-          infof(pktx->data, "QUIC: ngtcp2 selected version 0x%x for next attempt", negotiated_version);
+        infof(pktx->data, "QUIC: Received Version Negotiation packet from server (ngtcp2 code %d)", rv);
+      }
+      // ngtcp2_crypto_version_negotiation_cb (set as conn->callbacks.version_negotiation)
+      // should have been called by ngtcp2_conn_read_pkt and selected a version.
+      // We retrieve what it decided.
+      ctx->negotiated_version_to_retry = ngtcp2_conn_get_negotiated_version(ctx->qconn);
+
+      if(pktx->data->set.verbose) {
+        if(ctx->negotiated_version_to_retry != 0) {
+          infof(pktx->data, "QUIC: ngtcp2 selected version 0x%x for potential retry", ctx->negotiated_version_to_retry);
         }
         else {
-          infof(pktx->data, "QUIC: ngtcp2 did not select a version after VN packet (or API unavailable here)");
+          infof(pktx->data, "QUIC: ngtcp2 did not select a version after VN packet (or no common version found)");
         }
       }
+      ctx->vn_retry_needed = TRUE;
+      /* Do not call cf_ngtcp2_err_set here as it might close the connection
+         if NGTCP2_ERR_RECV_VERSION_NEGOTIATION is considered fatal by cf_ngtcp2_err_is_fatal.
+         Instead, signal success for now, and let cf_ngtcp2_connect handle the retry. */
+      return CURLE_OK;
     }
-    CURL_TRC_CF(pktx->data, pktx->cf, "ingress, read_pkt -> %s (%d)",
-                ngtcp2_strerror(rv), rv);
-    cf_ngtcp2_err_set(pktx->cf, pktx->data, rv);
-
-    if(rv == NGTCP2_ERR_CRYPTO)
-      /* this is a "TLS problem", but a failed certificate verification
-         is a common reason for this */
-      return CURLE_PEER_FAILED_VERIFICATION;
-    return CURLE_RECV_ERROR;
+    else {
+      CURL_TRC_CF(pktx->data, pktx->cf, "ingress, read_pkt -> %s (%d)",
+                  ngtcp2_strerror(rv), rv);
+      cf_ngtcp2_err_set(pktx->cf, pktx->data, rv);
+      if(rv == NGTCP2_ERR_CRYPTO)
+        /* this is a "TLS problem", but a failed certificate verification
+           is a common reason for this */
+        return CURLE_PEER_FAILED_VERIFICATION;
+      return CURLE_RECV_ERROR;
+    }
   }
 
   return CURLE_OK;
@@ -2564,15 +2604,26 @@ static const struct alpn_spec ALPN_SPEC_H3 = {
   ngtcp2_addr_init(&ctx->connected_path.remote,
                    &sockaddr->curl_sa_addr, (socklen_t)sockaddr->addrlen);
 
-  uint32_t client_chosen_version = NGTCP2_PROTO_VER_V1;
-
-  if(data->set.httpwant == CURL_HTTP_VERSION_3_V2) {
+  uint32_t client_chosen_version;
+  if(ctx->current_attempt_version != 0) { // Non-zero if set by VN retry logic
+    client_chosen_version = ctx->current_attempt_version;
+    if(data->set.verbose) {
+      infof(data, "QUIC: VN re-attempting with client_chosen_version 0x%x", client_chosen_version);
+    }
+  }
+  else if(data->set.httpwant == CURL_HTTP_VERSION_3_V2) {
     client_chosen_version = NGTCP2_PROTO_VER_V2;
   }
+  else {
+    client_chosen_version = NGTCP2_PROTO_VER_V1;
+  }
+  // The existing verbose log for initial attempt will now correctly reflect the actual first attempt version.
+  if(data->set.verbose && ctx->current_attempt_version == 0) { // Only log initial attempt here
+     infof(data, "Attempting HTTP/3 QUIC version %d", (client_chosen_version == NGTCP2_PROTO_VER_V2) ? 2 : 1);
+  }
 
-  if(data->set.verbose) {
-    infof(data, "Attempting HTTP/3 QUIC version %d",
-          (client_chosen_version == NGTCP2_PROTO_VER_V2) ? 2 : 1);
+  if(ctx->initial_httpwant == 0) { // Only set on the actual first try
+      ctx->initial_httpwant = data->set.httpwant;
   }
 
   rc = ngtcp2_conn_client_new(&ctx->qconn, &ctx->dcid, &ctx->scid,
@@ -2665,6 +2716,57 @@ static CURLcode cf_ngtcp2_connect(struct Curl_cfilter *cf,
   result = cf_progress_ingress(cf, data, &pktx);
   if(result)
     goto out;
+
+  if(result == CURLE_OK && ctx->vn_retry_needed) {
+    if(ctx->negotiated_version_to_retry != 0) {
+      infof(data, "QUIC: VN received. Attempting retry with version 0x%x",
+            ctx->negotiated_version_to_retry);
+
+      // Store initial httpwant if this is the first pass before VN
+      if(ctx->initial_httpwant == 0) {
+        ctx->initial_httpwant = data->set.httpwant;
+      }
+      ctx->current_attempt_version = ctx->negotiated_version_to_retry;
+
+      // Clean up existing connection state preparing for a new one
+      // This mimics parts of cf_ngtcp2_ctx_close but keeps cf_ngtcp2_ctx itself
+      Curl_vquic_tls_cleanup(&ctx->tls);
+      if(ctx->h3conn) {
+        nghttp3_conn_del(ctx->h3conn);
+        ctx->h3conn = NULL;
+      }
+      if(ctx->qconn) {
+        ngtcp2_conn_del(ctx->qconn);
+        ctx->qconn = NULL; // This will trigger cf_connect_start again
+      }
+#ifdef OPENSSL_QUIC_API2
+      if(ctx->ossl_ctx) {
+        ngtcp2_crypto_ossl_ctx_del(ctx->ossl_ctx);
+        ctx->ossl_ctx = NULL;
+      }
+#endif
+      // Reset other necessary states, e.g., handshake completion
+      ctx->tls_handshake_complete = FALSE;
+      ctx->tls_vrfy_result = CURLE_OK;
+      ctx->use_earlydata = FALSE;
+      ctx->earlydata_accepted = FALSE;
+      ctx->earlydata_skip = 0;
+      // Do not reset q.sockfd as the underlying socket is reused for VN.
+      // vquic_ctx_free(&ctx->q) and vquic_ctx_init(&ctx->q) might be too much here if socket is reused.
+      // ngtcp2 handles re-initiation on the same UDP path.
+
+      ctx->vn_retry_needed = FALSE;
+      *done = FALSE; // Signal to the caller to call us again
+      result = CURLE_OK; // Or CURLE_AGAIN if that's more appropriate for filter manager
+      goto out;
+    }
+    else {
+      failf(data, "QUIC: Version Negotiation failed; no common version with server");
+      result = CURLE_UNSUPPORTED_PROTOCOL; // Or a more specific QUIC error
+      // Fall through to error handling at the end of cf_ngtcp2_connect
+      goto out;
+    }
+  }
 
   result = cf_progress_egress(cf, data, &pktx);
   if(result)
