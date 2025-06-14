@@ -835,7 +835,7 @@ static ngtcp2_callbacks ng_callbacks = {
   NULL, /* recv_client_initial */
   ngtcp2_crypto_recv_crypto_data_cb,
   cf_ngtcp2_handshake_completed,
-  ngtcp2_crypto_recv_version_negotiation_cb, /* recv_version_negotiation */
+  NULL, /* recv_version_negotiation */
   ngtcp2_crypto_encrypt_cb,
   ngtcp2_crypto_decrypt_cb,
   ngtcp2_crypto_hp_mask_cb,
@@ -867,7 +867,7 @@ static ngtcp2_callbacks ng_callbacks = {
   NULL, /* lost_datagram */
   ngtcp2_crypto_get_path_challenge_data_cb,
   cb_stream_stop_sending,
-  NULL, /* version_negotiation */
+  ngtcp2_crypto_version_negotiation_cb, /* version_negotiation */
   cb_recv_rx_key,
   NULL, /* recv_tx_key */
   NULL, /* early_data_rejected */
