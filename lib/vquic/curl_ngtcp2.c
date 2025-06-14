@@ -491,8 +491,8 @@ static void quic_settings(struct cf_ngtcp2_ctx *ctx,
   else if(ctx->initial_httpwant == CURL_HTTP_VERSION_3_V2) {
     s->available_versions = available_versions_v2; // {V2, V1}
     s->available_versionslen = 2;
-    s->preferred_versions = available_versions_v2_only; // Prefer V2 only initially
-    s->preferred_versionslen = 1;
+    s->preferred_versions = NULL;
+    s->preferred_versionslen = 0;
   }
   else { // Default to V1
     s->available_versions = available_versions_v1; // {V1}
