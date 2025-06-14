@@ -26,8 +26,6 @@
 #include "testtrace.h"
 #include "memdebug.h"
 
-#ifdef LIB585
-
 static int testcounter;
 
 static curl_socket_t tst_opensocket(void *clientp,
@@ -53,11 +51,6 @@ static void setupcallbacks(CURL *curl)
   curl_easy_setopt(curl, CURLOPT_CLOSESOCKETFUNCTION, tst_closesocket);
   testcounter = 0;
 }
-
-#else
-#define setupcallbacks(x) Curl_nop_stmt
-#endif
-
 
 CURLcode test(char *URL)
 {
@@ -89,7 +82,8 @@ CURLcode test(char *URL)
   if(libtest_arg3 && !strcmp(libtest_arg3, "activeftp"))
     test_setopt(curl, CURLOPT_FTPPORT, "-");
 
-  setupcallbacks(curl);
+  if(testnum == 585 || testnum == 586 || testnum == 595 || testnum == 596)
+    setupcallbacks(curl);
 
   res = curl_easy_perform(curl);
 
@@ -181,5 +175,3 @@ test_cleanup:
 
   return res;
 }
-
-#undef setupcallbacks

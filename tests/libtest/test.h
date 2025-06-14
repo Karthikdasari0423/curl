@@ -71,7 +71,7 @@ extern char *libtest_arg4; /* set by first.c to the argv[4] or NULL */
 /* argc and argv as passed in to the main() function */
 extern int test_argc;
 extern char **test_argv;
-
+extern int testnum;
 extern struct timeval tv_test_start; /* for test timing */
 
 extern int select_wrapper(int nfds, fd_set *rd, fd_set *wr, fd_set *exc,
@@ -527,3 +527,10 @@ extern CURLcode test(char *URL); /* the actual test function provided by each
     return CURLE_UNSUPPORTED_PROTOCOL;          \
   }
 #endif
+
+/* Set default that each test may override */
+#undef TEST_HANG_TIMEOUT
+#define TEST_HANG_TIMEOUT 60 * 1000
+
+#undef NUM_HANDLES
+#define NUM_HANDLES 4
