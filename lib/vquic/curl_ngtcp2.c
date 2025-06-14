@@ -2539,6 +2539,11 @@ static const struct alpn_spec ALPN_SPEC_H3 = {
     client_chosen_version = NGTCP2_PROTO_VER_V2;
   }
 
+  if(data->set.verbose) {
+    infof(data, "Attempting HTTP/3 QUIC version %d",
+          (client_chosen_version == NGTCP2_PROTO_VER_V2) ? 2 : 1);
+  }
+
   rc = ngtcp2_conn_client_new(&ctx->qconn, &ctx->dcid, &ctx->scid,
                               &ctx->connected_path,
                               client_chosen_version, &ng_callbacks,
