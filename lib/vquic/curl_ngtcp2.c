@@ -79,6 +79,15 @@
 #include "../memdebug.h"
 
 
+/* Supported QUIC versions */
+static const uint32_t available_versions_v1[] = {
+  NGTCP2_PROTO_VER_V1
+};
+static const uint32_t available_versions_v2[] = {
+  NGTCP2_PROTO_VER_V2,
+  NGTCP2_PROTO_VER_V1
+};
+
 #define QUIC_MAX_STREAMS (256*1024)
 #define QUIC_MAX_DATA (1*1024*1024)
 #define QUIC_HANDSHAKE_TIMEOUT (10*NGTCP2_SECONDS)
@@ -450,15 +459,16 @@ static void quic_settings(struct cf_ngtcp2_ctx *ctx,
 
   if(data->set.httpwant == CURL_HTTP_VERSION_3_V2) {
     s->original_version = NGTCP2_PROTO_VER_V2;
-    s->available_versions[0] = NGTCP2_PROTO_VER_V2;
-    s->available_versions[1] = NGTCP2_PROTO_VER_V1; /* Offer V1 as fallback */
-    s->available_versions_len = 2;
+    s->available_versions = available_versions_v2;
+    s->available_versionslen = sizeof(available_versions_v2) /
+                                sizeof(available_versions_v2[0]);
   }
   else {
     /* Default to V1 if not V2 or if data is NULL (should not happen in practice here) */
     s->original_version = NGTCP2_PROTO_VER_V1;
-    s->available_versions[0] = NGTCP2_PROTO_VER_V1;
-    s->available_versions_len = 1;
+    s->available_versions = available_versions_v1;
+    s->available_versionslen = sizeof(available_versions_v1) /
+                                sizeof(available_versions_v1[0]);
   }
 
   s->initial_ts = pktx->ts;
