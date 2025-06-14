@@ -448,7 +448,19 @@ static void quic_settings(struct cf_ngtcp2_ctx *ctx,
   s->log_printf = NULL;
 #endif
 
-  (void)data;
+  if(data->set.httpwant == CURL_HTTP_VERSION_3_V2) {
+    s->original_version = NGTCP2_PROTO_VER_V2;
+    s->available_versions[0] = NGTCP2_PROTO_VER_V2;
+    s->available_versions[1] = NGTCP2_PROTO_VER_V1; /* Offer V1 as fallback */
+    s->available_versions_len = 2;
+  }
+  else {
+    /* Default to V1 if not V2 or if data is NULL (should not happen in practice here) */
+    s->original_version = NGTCP2_PROTO_VER_V1;
+    s->available_versions[0] = NGTCP2_PROTO_VER_V1;
+    s->available_versions_len = 1;
+  }
+
   s->initial_ts = pktx->ts;
   s->handshake_timeout = QUIC_HANDSHAKE_TIMEOUT;
   s->max_window = 100 * ctx->max_stream_window;
@@ -2511,9 +2523,15 @@ static const struct alpn_spec ALPN_SPEC_H3 = {
   ngtcp2_addr_init(&ctx->connected_path.remote,
                    &sockaddr->curl_sa_addr, (socklen_t)sockaddr->addrlen);
 
+  uint32_t client_chosen_version = NGTCP2_PROTO_VER_V1;
+
+  if(data->set.httpwant == CURL_HTTP_VERSION_3_V2) {
+    client_chosen_version = NGTCP2_PROTO_VER_V2;
+  }
+
   rc = ngtcp2_conn_client_new(&ctx->qconn, &ctx->dcid, &ctx->scid,
                               &ctx->connected_path,
-                              NGTCP2_PROTO_VER_V1, &ng_callbacks,
+                              client_chosen_version, &ng_callbacks,
                               &ctx->settings, &ctx->transport_params,
                               NULL, cf);
   if(rc)
